@@ -1,0 +1,24 @@
+{
+    "name": "com.heathen.gameplaytags",
+    "displayName": "Foundation for Gameplay Tags",
+    "version": "1.0.0",
+    "unity": "6000.0",
+    "author": {
+        "name": "Heathen Group",
+        "email": "support@heathen.group",
+        "url": "https://heathen.group"
+    },
+    "description": "Dot-path hierarchical tag system with O(1) runtime lookup, Burst-safe snapshot APIs, and stack-count semantics. Foundation tier — Apache 2.0.",
+    "license": "LICENSE.md",
+    "keywords": [
+        "gameplay",
+        "tags",
+        "gameplaytags",
+        "abilities",
+        "heathen"
+    ],
+    "dependencies": {
+        "com.unity.collections": "2.6.2",
+        "com.unity.mathematics": "1.2.5"
+    }
+}

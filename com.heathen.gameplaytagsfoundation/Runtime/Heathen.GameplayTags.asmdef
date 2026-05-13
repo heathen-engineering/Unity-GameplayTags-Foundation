@@ -1,0 +1,17 @@
+{
+    "name": "Heathen.GameplayTags",
+    "rootNamespace": "",
+    "references": [
+        "Unity.Collections",
+        "Unity.Mathematics"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": true,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
