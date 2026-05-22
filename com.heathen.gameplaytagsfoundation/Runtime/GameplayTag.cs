@@ -31,6 +31,10 @@ namespace Heathen.GameplayTags
         public static bool operator ==(GameplayTag a, GameplayTag b) => a._id == b._id;
         public static bool operator !=(GameplayTag a, GameplayTag b) => a._id != b._id;
 
+        public static implicit operator GameplayTag(string tagPath) => FromName(tagPath);
+        public static implicit operator GameplayTag(ulong id)       => new GameplayTag(id);
+        public static implicit operator ulong(GameplayTag tag)      => tag._id;
+
         public static readonly GameplayTag Invalid = default;
 
         public static unsafe ulong HashPath(string dotPath)

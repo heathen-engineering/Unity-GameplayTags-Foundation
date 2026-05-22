@@ -98,6 +98,11 @@ using Heathen.GameplayTags;
 // Look up a tag by name (returns invalid tag if not registered)
 GameplayTag buffStrength = GameplayTag.FromName("Effects.Buff.Strength");
 
+// Implicit conversions — string is hashed once at the boundary, zero cost inside the system
+GameplayTag sameTag = "Effects.Buff.Strength";   // string → GameplayTag
+ulong       id      = sameTag;                    // GameplayTag → ulong
+GameplayTag fromId  = id;                         // ulong → GameplayTag
+
 // Hierarchy checks
 GameplayTag effects = GameplayTag.FromName("Effects");
 bool isDescendant = effects.IsAncestorOf(buffStrength); // true
@@ -167,6 +172,9 @@ descMap.Dispose();
 | `IsValid` | `true` if `Id != 0` |
 | `IsAncestorOf(other)` | `true` if this tag is an ancestor of `other` in the registry |
 | `GetDescendants()` | All registered descendants as `IEnumerable<ulong>` |
+| `implicit (string → GameplayTag)` | Hash a dot-path string to a tag at the call site |
+| `implicit (ulong → GameplayTag)` | Wrap a pre-hashed or serialised `ulong` id |
+| `implicit (GameplayTag → ulong)` | Extract the underlying `ulong` hash |
 
 ### `GameplayTagRegistry`
 
