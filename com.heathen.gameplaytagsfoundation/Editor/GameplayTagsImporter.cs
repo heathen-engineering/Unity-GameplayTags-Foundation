@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
+using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEditor.AssetImporters;
 using UnityEngine;
@@ -29,34 +30,28 @@ namespace Heathen.GameplayTags.Editor
     {
         public override void OnImportAsset(AssetImportContext ctx)
         {
-            GptagsSource source = null;
+            var compiled = ScriptableObject.CreateInstance<GameplayTagsCompiledData>();
+
             try
             {
                 var json = File.ReadAllText(ctx.assetPath);
-                source = JsonUtility.FromJson<GptagsSource>(json);
+                var root = JObject.Parse(json);
+                compiled.AutoRegister = root["registered"]?.Value<bool>() ?? false;
+                var tags = root["tags"]?.ToObject<string[]>() ?? Array.Empty<string>();
+                compiled.Entries = compiled.AutoRegister && tags.Length > 0
+                    ? BuildEntries(tags)
+                    : Array.Empty<CompiledTagEntry>();
             }
             catch (Exception e)
             {
                 ctx.LogImportError($"Failed to parse .gptags JSON: {e.Message}");
-            }
-
-            var compiled = ScriptableObject.CreateInstance<GameplayTagsCompiledData>();
-            compiled.AutoRegister = source?.registered ?? false;
-
-            if (compiled.AutoRegister && source?.tags is { Length: > 0 })
-            {
-                compiled.Entries = BuildEntries(source.tags);
-            }
-            else
-            {
-                compiled.Entries = Array.Empty<CompiledTagEntry>();
+                compiled.AutoRegister = false;
+                compiled.Entries      = Array.Empty<CompiledTagEntry>();
             }
 
             ctx.AddObjectToAsset("main", compiled);
             ctx.SetMainObject(compiled);
 
-            // Immediately merge into the editor-time registry so tag pickers
-            // reflect the new data without a manual refresh.
             if (compiled.AutoRegister)
                 GameplayTagRegistry.RegisterDefaults(compiled);
         }
@@ -82,7 +77,7 @@ namespace Heathen.GameplayTags.Editor
                     sb.Append(parts[i]);
                     var path = sb.ToString();
                     var hash = GameplayTagRegistry.Hash(path);
-                    hashes[i]    = hash;
+                    hashes[i]     = hash;
                     nameMap[hash] = path;
                     if (!hierarchy.ContainsKey(hash))
                         hierarchy[hash] = new HashSet<ulong>();
@@ -108,17 +103,8 @@ namespace Heathen.GameplayTags.Editor
             }
             return entries;
         }
-
-        [Serializable]
-        private class GptagsSource
-        {
-            public bool     registered = false;
-            public string[] tags       = Array.Empty<string>();
-        }
     }
 
-    // Refreshes the editor-time registry from all compiled .gptags assets on load
-    // and after any asset import. Mirrors GameplayTagsDataEditor's [InitializeOnLoad] pattern.
     [InitializeOnLoad]
     internal static class GameplayTagsCompiledDataRefresh
     {
@@ -132,7 +118,7 @@ namespace Heathen.GameplayTags.Editor
             var guids = AssetDatabase.FindAssets("t:GameplayTagsCompiledData");
             foreach (var guid in guids)
             {
-                var path = AssetDatabase.GUIDToAssetPath(guid);
+                var path  = AssetDatabase.GUIDToAssetPath(guid);
                 var asset = AssetDatabase.LoadAssetAtPath<GameplayTagsCompiledData>(path);
                 if (asset != null && asset.AutoRegister)
                     GameplayTagRegistry.RegisterDefaults(asset);
