@@ -40,7 +40,7 @@ namespace Heathen.GameplayTags.Editor
                 ctx.LogImportError($"Failed to parse .gptags JSON: {e.Message}");
             }
 
-            var compiled = CreateInstance<GameplayTagsCompiledData>();
+            var compiled = ScriptableObject.CreateInstance<GameplayTagsCompiledData>();
             compiled.AutoRegister = source?.registered ?? false;
 
             if (compiled.AutoRegister && source?.tags is { Length: > 0 })
