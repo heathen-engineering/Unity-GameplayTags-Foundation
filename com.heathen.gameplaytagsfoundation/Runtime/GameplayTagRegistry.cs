@@ -51,6 +51,14 @@ namespace Heathen.GameplayTags
             RegistryChanged?.Invoke();
         }
 
+        // Register a single tag path at runtime. Use for UGC/mod tags not in a GameplayTagsData asset.
+        public static void Register(string dotPath)
+        {
+            if (string.IsNullOrWhiteSpace(dotPath)) return;
+            RegisterHierarchy(dotPath, _runtime);
+            RegistryChanged?.Invoke();
+        }
+
         private static void MergeData(GameplayTagsData data, Dictionary<ulong, HashSet<ulong>> target)
         {
             if (data == null || data.tags == null) return;
