@@ -10,22 +10,26 @@ namespace Heathen.GameplayTags
         public GameplayTag Tag;
         public GameplayTagComparisonOp Comparison = GameplayTagComparisonOp.Exists;
         public ulong CompareValue = 1;
+        // When Id != 0, the right-hand side is drawn from the collection at runtime
+        // instead of the constant CompareValue. Enables tag-vs-tag comparisons.
+        public GameplayTag CompareTag;
         public bool ExactMatch = true;
         public GameplayTagLogicOp LogicOp = GameplayTagLogicOp.And;
 
         public bool Evaluate(GameplayTagCollection collection)
         {
-            ulong value = GetValue(collection);
+            ulong lhs = GetValue(collection);
+            ulong rhs = CompareTag.Id != 0 ? collection.GetValue(CompareTag) : CompareValue;
             return Comparison switch
             {
-                GameplayTagComparisonOp.Exists       => value != 0,
-                GameplayTagComparisonOp.NotExists    => value == 0,
-                GameplayTagComparisonOp.Equal        => value == CompareValue,
-                GameplayTagComparisonOp.NotEqual     => value != CompareValue,
-                GameplayTagComparisonOp.Less         => value < CompareValue,
-                GameplayTagComparisonOp.LessEqual    => value <= CompareValue,
-                GameplayTagComparisonOp.Greater      => value > CompareValue,
-                GameplayTagComparisonOp.GreaterEqual => value >= CompareValue,
+                GameplayTagComparisonOp.Exists       => lhs != 0,
+                GameplayTagComparisonOp.NotExists    => lhs == 0,
+                GameplayTagComparisonOp.Equal        => lhs == rhs,
+                GameplayTagComparisonOp.NotEqual     => lhs != rhs,
+                GameplayTagComparisonOp.Less         => lhs < rhs,
+                GameplayTagComparisonOp.LessEqual    => lhs <= rhs,
+                GameplayTagComparisonOp.Greater      => lhs > rhs,
+                GameplayTagComparisonOp.GreaterEqual => lhs >= rhs,
                 _                                    => false,
             };
         }
