@@ -24,6 +24,13 @@ namespace Heathen.GameplayTags
             foreach (var kv in _defaults)
                 _runtime[kv.Key] = new HashSet<ulong>(kv.Value);
 
+            // Compiled .gptags assets — pre-built hierarchy, no string parsing.
+            var compiled = Resources.LoadAll<GameplayTagsCompiledData>("");
+            foreach (var asset in compiled)
+                if (asset != null && asset.AutoRegister)
+                    MergeCompiledData(asset, _runtime);
+
+            // Legacy GameplayTagsData assets — kept for backward compatibility.
             var assets = Resources.LoadAll<GameplayTagsData>("");
             foreach (var asset in assets)
                 if (asset.autoRegister)
@@ -36,8 +43,15 @@ namespace Heathen.GameplayTags
         public static void RegisterDefaults(GameplayTagsData data)
         {
             MergeData(data, _defaults);
-            // Mirror into runtime dict if already initialized
             MergeData(data, _runtime);
+            RegistryChanged?.Invoke();
+        }
+
+        // Compiled variant — called by GameplayTagsImporter after asset creation.
+        public static void RegisterDefaults(GameplayTagsCompiledData data)
+        {
+            MergeCompiledData(data, _defaults);
+            MergeCompiledData(data, _runtime);
             RegistryChanged?.Invoke();
         }
 
@@ -57,6 +71,26 @@ namespace Heathen.GameplayTags
             if (string.IsNullOrWhiteSpace(dotPath)) return;
             RegisterHierarchy(dotPath, _runtime);
             RegistryChanged?.Invoke();
+        }
+
+        private static void MergeCompiledData(GameplayTagsCompiledData data, Dictionary<ulong, HashSet<ulong>> target)
+        {
+            if (data?.Entries == null) return;
+            foreach (var entry in data.Entries)
+            {
+                if (!target.TryGetValue(entry.Id, out var set))
+                {
+                    set = new HashSet<ulong>(entry.Descendants ?? Array.Empty<ulong>());
+                    target[entry.Id] = set;
+                }
+                else if (entry.Descendants != null)
+                {
+                    foreach (var d in entry.Descendants)
+                        set.Add(d);
+                }
+                if (!string.IsNullOrEmpty(entry.Name))
+                    _nameMap[entry.Id] = entry.Name;
+            }
         }
 
         private static void MergeData(GameplayTagsData data, Dictionary<ulong, HashSet<ulong>> target)

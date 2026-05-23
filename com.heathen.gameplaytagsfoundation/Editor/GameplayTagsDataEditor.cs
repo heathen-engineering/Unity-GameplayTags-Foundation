@@ -20,11 +20,14 @@ namespace Heathen.GameplayTags.Editor
             var guids = AssetDatabase.FindAssets("t:GameplayTagsData");
             foreach (var guid in guids)
             {
-                var path = AssetDatabase.GUIDToAssetPath(guid);
+                var path  = AssetDatabase.GUIDToAssetPath(guid);
                 var asset = AssetDatabase.LoadAssetAtPath<GameplayTagsData>(path);
                 if (asset != null && asset.autoRegister)
                     GameplayTagRegistry.RegisterDefaults(asset);
             }
+
+            // Also refresh compiled .gptags assets.
+            GameplayTagsCompiledDataRefresh.Refresh();
         }
 
         private SerializedProperty _autoRegister;
