@@ -4,9 +4,9 @@ using UnityEngine;
 namespace Heathen.GameplayTags
 {
     [Serializable]
-    public readonly struct GameplayTag : IEquatable<GameplayTag>
+    public struct GameplayTag : IEquatable<GameplayTag>
     {
-        [SerializeField] private readonly ulong _id;
+        [SerializeField] private ulong _id;
 
         public ulong Id => _id;
         public bool IsValid => _id != 0;
