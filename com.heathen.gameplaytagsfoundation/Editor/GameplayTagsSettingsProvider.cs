@@ -32,6 +32,12 @@ namespace Heathen.GameplayTags.Editor
             fontStyle = FontStyle.Italic,
             normal = { textColor = new Color(0.5f, 0.5f, 0.5f) }
         };
+        private static GUIStyle s_compiledStyle;
+        private static GUIStyle CompiledStyle => s_compiledStyle ??= new GUIStyle(EditorStyles.label)
+        {
+            fontStyle = FontStyle.Italic,
+            normal = { textColor = new Color(0.4f, 0.75f, 1f) }
+        };
         private static readonly Color GreenTick = new Color(0.3f, 0.85f, 0.4f);
 
         // ── SettingsProvider plumbing ─────────────────────────────────────────
@@ -166,6 +172,33 @@ namespace Heathen.GameplayTags.Editor
             var dropRect = GUILayoutUtility.GetRect(0, 20, GUILayout.ExpandWidth(true));
             GUI.Box(dropRect, "Drop GameplayTagsData here to pin", EditorStyles.helpBox);
             HandleDatabaseDrop(dropRect);
+
+            DrawCompiledSourcesSection();
+        }
+
+        private void DrawCompiledSourcesSection()
+        {
+            var guids = AssetDatabase.FindAssets("t:GameplayTagsCompiledData");
+            if (guids.Length == 0) return;
+
+            EditorGUILayout.Space(4);
+            using (new EditorGUILayout.HorizontalScope(EditorStyles.toolbar, GUILayout.ExpandWidth(true)))
+                EditorGUILayout.LabelField("Compiled Sources (.gptags)", EditorStyles.whiteLabel, GUILayout.ExpandWidth(true));
+
+            foreach (var guid in guids)
+            {
+                var path     = AssetDatabase.GUIDToAssetPath(guid);
+                var compiled = AssetDatabase.LoadAssetAtPath<GameplayTagsCompiledData>(path);
+                if (compiled == null) continue;
+
+                var nodeCount = compiled.Entries?.Length ?? 0;
+                using (new EditorGUILayout.HorizontalScope(EditorStyles.toolbar, GUILayout.ExpandWidth(true)))
+                {
+                    EditorGUILayout.LabelField($"{compiled.name}  ({nodeCount} nodes)", GUILayout.ExpandWidth(true));
+                    if (GUILayout.Button("Select", EditorStyles.toolbarButton, GUILayout.Width(48)))
+                        Selection.activeObject = compiled;
+                }
+            }
         }
 
         private void HandleDatabaseDrop(Rect rect)
@@ -248,19 +281,36 @@ namespace Heathen.GameplayTags.Editor
         private struct TagEntry
         {
             public string FullPath;
-            public string Segment;   // last dot-segment
+            public string Segment;    // last dot-segment
             public int    Depth;
-            public bool   IsVirtual; // implied by a child, not explicit in any database
+            public bool   IsVirtual;  // implied by a child, not explicit in any database
+            public bool   IsCompiled; // from .gptags compiled source — read-only in UI
             public bool   HasChildren;
         }
 
         private List<TagEntry> BuildTree()
         {
-            // Collect all explicitly stored tags across all databases
-            var explicitTags = new HashSet<string>();
+            // Collect explicitly stored tags from GameplayTagsData databases
+            var dbTags = new HashSet<string>();
             foreach (var db in _settings.GetAllDatabases())
                 foreach (var tag in db.tags)
-                    if (!string.IsNullOrWhiteSpace(tag)) explicitTags.Add(tag);
+                    if (!string.IsNullOrWhiteSpace(tag)) dbTags.Add(tag);
+
+            // Collect tag names from compiled .gptags assets (all hierarchy nodes)
+            var compiledOnlyTags = new HashSet<string>();
+            var compiledGuids = AssetDatabase.FindAssets("t:GameplayTagsCompiledData");
+            foreach (var guid in compiledGuids)
+            {
+                var assetPath = AssetDatabase.GUIDToAssetPath(guid);
+                var compiled  = AssetDatabase.LoadAssetAtPath<GameplayTagsCompiledData>(assetPath);
+                if (compiled?.Entries == null) continue;
+                foreach (var entry in compiled.Entries)
+                    if (!string.IsNullOrWhiteSpace(entry.Name) && !dbTags.Contains(entry.Name))
+                        compiledOnlyTags.Add(entry.Name);
+            }
+
+            var explicitTags = new HashSet<string>(dbTags);
+            explicitTags.UnionWith(compiledOnlyTags);
 
             // Add implied intermediate nodes
             var all = new HashSet<string>(explicitTags);
@@ -290,6 +340,7 @@ namespace Heathen.GameplayTags.Editor
                     Segment     = dotIndex < 0 ? path : path.Substring(dotIndex + 1),
                     Depth       = path.Count(c => c == '.'),
                     IsVirtual   = !explicitTags.Contains(path),
+                    IsCompiled  = compiledOnlyTags.Contains(path),
                     HasChildren = sorted.Any(p => p.StartsWith(path + ".")),
                 });
             }
@@ -370,7 +421,7 @@ namespace Heathen.GameplayTags.Editor
 
             // ── Content: editing or label ────────────────────────────────────
 
-            if (_editingPath == entry.FullPath)
+            if (!entry.IsCompiled && _editingPath == entry.FullPath)
             {
                 var ctrlName = "TagEdit_" + entry.FullPath;
                 GUI.SetNextControlName(ctrlName);
@@ -400,11 +451,15 @@ namespace Heathen.GameplayTags.Editor
             }
             else
             {
-                var style = entry.IsVirtual ? VirtualStyle : EditorStyles.label;
+                GUIStyle style;
+                if (entry.IsCompiled)       style = CompiledStyle;
+                else if (entry.IsVirtual)   style = VirtualStyle;
+                else                        style = EditorStyles.label;
                 EditorGUI.LabelField(contentRect, entry.Segment, style);
 
-                // Click to begin editing
-                if (Event.current.type == EventType.MouseDown &&
+                // Click to begin editing (compiled tags are read-only)
+                if (!entry.IsCompiled &&
+                    Event.current.type == EventType.MouseDown &&
                     contentRect.Contains(Event.current.mousePosition))
                 {
                     _editingPath = entry.FullPath;
@@ -415,13 +470,16 @@ namespace Heathen.GameplayTags.Editor
                 }
             }
 
-            // ── [x] delete button ────────────────────────────────────────────
+            // ── [x] delete button (hidden for compiled-only tags) ────────────
 
-            var prevColor = GUI.contentColor;
-            GUI.contentColor = new Color(1f, 0.4f, 0.4f);
-            if (GUI.Button(deleteRect, "✕", EditorStyles.miniButton))
-                ConfirmDelete(entry);
-            GUI.contentColor = prevColor;
+            if (!entry.IsCompiled)
+            {
+                var prevColor = GUI.contentColor;
+                GUI.contentColor = new Color(1f, 0.4f, 0.4f);
+                if (GUI.Button(deleteRect, "✕", EditorStyles.miniButton))
+                    ConfirmDelete(entry);
+                GUI.contentColor = prevColor;
+            }
         }
 
         // ── Rename ───────────────────────────────────────────────────────────
