@@ -1,5 +1,8 @@
+using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
+using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.UIElements;
@@ -10,21 +13,17 @@ namespace Heathen.GameplayTags.Editor
     {
         // ── State ─────────────────────────────────────────────────────────────
 
-        private GameplayTagsSettings _settings;
-        private GameplayTagsData _activeDatabase;
-
+        private string _activeSourcePath; // asset path of selected source (.gptags or .asset)
         private string _filter = "";
         private string _newTag = "";
-        private Vector2 _dbScroll;
+        private Vector2 _srcScroll;
         private Vector2 _tagScroll;
 
-        // Per-path foldout expansion (default open)
         private readonly Dictionary<string, bool> _expanded = new();
 
-        // Inline editing
-        private string _editingPath;   // full dot-path currently in edit mode
-        private string _editBuffer;    // current text in the edit field
-        private bool   _focusEdit;     // request focus on the text field next frame
+        private string _editingPath;
+        private string _editBuffer;
+        private bool   _focusEdit;
 
         private static GUIStyle s_virtualStyle;
         private static GUIStyle VirtualStyle => s_virtualStyle ??= new GUIStyle(EditorStyles.label)
@@ -47,7 +46,6 @@ namespace Heathen.GameplayTags.Editor
 
         public override void OnActivate(string searchContext, VisualElement rootElement)
         {
-            _settings = GameplayTagsSettings.GetOrCreate();
             GameplayTagRegistry.RegistryChanged += Repaint;
             GameplayTagsDataEditor.ForceRefresh();
         }
@@ -61,16 +59,14 @@ namespace Heathen.GameplayTags.Editor
 
         public override void OnGUI(string searchContext)
         {
-            if (_settings == null) _settings = GameplayTagsSettings.GetOrCreate();
-
             DrawToolsToolbar();
             EditorGUILayout.Space(4);
-            DrawDatabaseSection();
+            DrawSourcesSection();
             EditorGUILayout.Space(6);
             DrawTagSection();
         }
 
-        // ── Tools toolbar ────────────────────────────────────────────────────
+        // ── Toolbar ──────────────────────────────────────────────────────────
 
         private void DrawToolsToolbar()
         {
@@ -78,118 +74,65 @@ namespace Heathen.GameplayTags.Editor
             {
                 EditorGUILayout.LabelField("Gameplay Tags", EditorStyles.whiteLabel, GUILayout.Width(110));
                 GUILayout.FlexibleSpace();
-                if (GUILayout.Button("Visualizer", EditorStyles.toolbarButton, GUILayout.Width(74)))
-                    EditorApplication.ExecuteMenuItem("Tools/Heathen/Gameplay Tags Visualizer");
-                if (GUILayout.Button("Condition Builder", EditorStyles.toolbarButton, GUILayout.Width(110)))
-                    EditorApplication.ExecuteMenuItem("Tools/Heathen/Condition Set Builder");
-            }
-        }
-
-        // ── Database section ─────────────────────────────────────────────────
-
-        private void DrawDatabaseSection()
-        {
-            using (new EditorGUILayout.HorizontalScope(EditorStyles.toolbar, GUILayout.ExpandWidth(true)))
-            {
-                EditorGUILayout.LabelField("Tag Databases", EditorStyles.whiteLabel, GUILayout.ExpandWidth(true));
-
-                var newAuto = GUILayout.Toggle(_settings.autoDiscover, "Auto-discover",
-                    EditorStyles.toolbarButton, GUILayout.Width(100));
-                if (newAuto != _settings.autoDiscover)
-                {
-                    Undo.RecordObject(_settings, "Gameplay Tags Settings");
-                    _settings.autoDiscover = newAuto;
-                    EditorUtility.SetDirty(_settings);
-                    GameplayTagsDataEditor.ForceRefresh();
-                }
-
                 if (GUILayout.Button("New", EditorStyles.toolbarButton, GUILayout.Width(38)))
-                    CreateDatabase();
+                    CreateGpTagsFile();
                 if (GUILayout.Button("Refresh", EditorStyles.toolbarButton, GUILayout.Width(54)))
                     GameplayTagsDataEditor.ForceRefresh();
             }
+        }
 
-            var all = _settings.GetAllDatabases();
-            _dbScroll = EditorGUILayout.BeginScrollView(_dbScroll, GUILayout.MaxHeight(96));
+        // ── Sources section ──────────────────────────────────────────────────
 
-            var pinnedSet = new HashSet<GameplayTagsData>(_settings.databases);
-            for (int i = 0; i < all.Count; i++)
+        private void DrawSourcesSection()
+        {
+            using (new EditorGUILayout.HorizontalScope(EditorStyles.toolbar, GUILayout.ExpandWidth(true)))
+                EditorGUILayout.LabelField("Tag Sources", EditorStyles.whiteLabel, GUILayout.ExpandWidth(true));
+
+            _srcScroll = EditorGUILayout.BeginScrollView(_srcScroll, GUILayout.MaxHeight(120));
+
+            // .gptags files (primary format)
+            var gpGuids = AssetDatabase.FindAssets("t:GameplayTagsCompiledData");
+            foreach (var guid in gpGuids)
             {
-                var db = all[i];
-                bool isActive = _activeDatabase == db;
-                bool isPinned = pinnedSet.Contains(db);
+                var path = AssetDatabase.GUIDToAssetPath(guid);
+                if (!path.EndsWith(".gptags", StringComparison.OrdinalIgnoreCase)) continue;
+                var tags = ReadGpTagsSourceTags(path);
+                DrawSourceRow(path, Path.GetFileNameWithoutExtension(path), tags.Count, true);
+            }
 
-                using (new EditorGUILayout.HorizontalScope(EditorStyles.toolbar, GUILayout.ExpandWidth(true)))
-                {
-                    // Green tick for the active database
-                    var prevColor = GUI.contentColor;
-                    GUI.contentColor = isActive ? GreenTick : new Color(1, 1, 1, 0);
-                    EditorGUILayout.LabelField("✓", GUILayout.Width(16));
-                    GUI.contentColor = prevColor;
-
-                    if (GUILayout.Toggle(isActive, $"{db.name}  ({db.tags.Count} tags)",
-                        EditorStyles.toolbarButton, GUILayout.ExpandWidth(true)))
-                        _activeDatabase = db;
-
-                    if (GUILayout.Button("Select", EditorStyles.toolbarButton, GUILayout.Width(48)))
-                        Selection.activeObject = db;
-
-                    if (isPinned)
-                    {
-                        if (GUILayout.Button("Unpin", EditorStyles.toolbarButton, GUILayout.Width(44)))
-                        {
-                            var idx = _settings.databases.IndexOf(db);
-                            if (idx >= 0)
-                            {
-                                Undo.RecordObject(_settings, "Unpin Tag Database");
-                                _settings.databases.RemoveAt(idx);
-                                EditorUtility.SetDirty(_settings);
-                                if (_activeDatabase == db) _activeDatabase = null;
-                            }
-                        }
-                    }
-                    else
-                    {
-                        if (GUILayout.Button("Pin", EditorStyles.toolbarButton, GUILayout.Width(30)))
-                        {
-                            Undo.RecordObject(_settings, "Pin Tag Database");
-                            _settings.databases.Add(db);
-                            EditorUtility.SetDirty(_settings);
-                        }
-                    }
-                }
+            // Legacy GameplayTagsData assets
+            var dbGuids = AssetDatabase.FindAssets("t:GameplayTagsData");
+            foreach (var guid in dbGuids)
+            {
+                var path = AssetDatabase.GUIDToAssetPath(guid);
+                var db   = AssetDatabase.LoadAssetAtPath<GameplayTagsData>(path);
+                if (db == null) continue;
+                DrawSourceRow(path, db.name, db.tags.Count, false);
             }
 
             EditorGUILayout.EndScrollView();
-
-            // Drag-drop zone
-            var dropRect = GUILayoutUtility.GetRect(0, 20, GUILayout.ExpandWidth(true));
-            GUI.Box(dropRect, "Drop GameplayTagsData here to pin", EditorStyles.helpBox);
-            HandleDatabaseDrop(dropRect);
         }
 
-        private void HandleDatabaseDrop(Rect rect)
+        private void DrawSourceRow(string path, string displayName, int tagCount, bool isGpTags)
         {
-            var ev = Event.current;
-            if (!rect.Contains(ev.mousePosition)) return;
-            if (ev.type == EventType.DragUpdated)
+            bool isActive = _activeSourcePath == path;
+            var  label    = isGpTags
+                ? $"{displayName}  ({tagCount} tags)"
+                : $"{displayName}  ({tagCount} tags)  [legacy]";
+
+            using (new EditorGUILayout.HorizontalScope(EditorStyles.toolbar, GUILayout.ExpandWidth(true)))
             {
-                DragAndDrop.visualMode = DragAndDropVisualMode.Copy;
-                ev.Use();
-            }
-            else if (ev.type == EventType.DragPerform)
-            {
-                DragAndDrop.AcceptDrag();
-                foreach (var obj in DragAndDrop.objectReferences)
-                {
-                    if (obj is GameplayTagsData db && !_settings.databases.Contains(db))
-                    {
-                        Undo.RecordObject(_settings, "Pin Tag Database");
-                        _settings.databases.Add(db);
-                        EditorUtility.SetDirty(_settings);
-                    }
-                }
-                ev.Use();
+                var prevColor = GUI.contentColor;
+                GUI.contentColor = isActive ? GreenTick : new Color(1, 1, 1, 0);
+                EditorGUILayout.LabelField("✓", GUILayout.Width(16));
+                GUI.contentColor = prevColor;
+
+                bool nowActive = GUILayout.Toggle(isActive, label, EditorStyles.toolbarButton, GUILayout.ExpandWidth(true));
+                if (nowActive != isActive)
+                    _activeSourcePath = nowActive ? path : null;
+
+                if (GUILayout.Button("Select", EditorStyles.toolbarButton, GUILayout.Width(48)))
+                    Selection.activeObject = AssetDatabase.LoadMainAssetAtPath(path);
             }
         }
 
@@ -200,7 +143,6 @@ namespace Heathen.GameplayTags.Editor
             using (new EditorGUILayout.HorizontalScope(EditorStyles.toolbar, GUILayout.ExpandWidth(true)))
                 EditorGUILayout.LabelField("Tags", EditorStyles.whiteLabel, GUILayout.ExpandWidth(true));
 
-            // Filter
             using (new EditorGUILayout.HorizontalScope())
             {
                 var newFilter = EditorGUILayout.TextField(_filter, EditorStyles.toolbarSearchField);
@@ -211,10 +153,8 @@ namespace Heathen.GameplayTags.Editor
                 }
             }
 
-            // New tag row
             DrawNewTagRow();
 
-            // Unified tree
             _tagScroll = EditorGUILayout.BeginScrollView(_tagScroll);
             DrawTagTree();
             EditorGUILayout.EndScrollView();
@@ -222,23 +162,18 @@ namespace Heathen.GameplayTags.Editor
 
         private void DrawNewTagRow()
         {
-            if (_activeDatabase == null)
+            if (string.IsNullOrEmpty(_activeSourcePath))
             {
-                EditorGUILayout.HelpBox("Select a database (above) to add new tags to it.", MessageType.None);
+                EditorGUILayout.HelpBox("Select a source above to add new tags to it.", MessageType.None);
                 return;
             }
 
             using (new EditorGUILayout.HorizontalScope())
             {
                 _newTag = EditorGUILayout.TextField(_newTag, GUILayout.ExpandWidth(true));
-
                 EditorGUI.BeginDisabledGroup(string.IsNullOrWhiteSpace(_newTag));
-                if (GUILayout.Button("Add Tag", EditorStyles.miniButton, GUILayout.Width(60)) ||
-                    (Event.current.isKey && Event.current.keyCode == KeyCode.Return &&
-                     GUI.GetNameOfFocusedControl() == "NewTagField"))
-                {
+                if (GUILayout.Button("Add Tag", EditorStyles.miniButton, GUILayout.Width(60)))
                     CommitNewTag();
-                }
                 EditorGUI.EndDisabledGroup();
             }
         }
@@ -248,21 +183,35 @@ namespace Heathen.GameplayTags.Editor
         private struct TagEntry
         {
             public string FullPath;
-            public string Segment;   // last dot-segment
+            public string Segment;
             public int    Depth;
-            public bool   IsVirtual; // implied by a child, not explicit in any database
+            public bool   IsVirtual;
             public bool   HasChildren;
         }
 
         private List<TagEntry> BuildTree()
         {
-            // Collect all explicitly stored tags across all databases
             var explicitTags = new HashSet<string>();
-            foreach (var db in _settings.GetAllDatabases())
-                foreach (var tag in db.tags)
-                    if (!string.IsNullOrWhiteSpace(tag)) explicitTags.Add(tag);
 
-            // Add implied intermediate nodes
+            var gpGuids = AssetDatabase.FindAssets("t:GameplayTagsCompiledData");
+            foreach (var guid in gpGuids)
+            {
+                var path = AssetDatabase.GUIDToAssetPath(guid);
+                if (!path.EndsWith(".gptags", StringComparison.OrdinalIgnoreCase)) continue;
+                foreach (var tag in ReadGpTagsSourceTags(path))
+                    if (!string.IsNullOrWhiteSpace(tag)) explicitTags.Add(tag.Trim());
+            }
+
+            var dbGuids = AssetDatabase.FindAssets("t:GameplayTagsData");
+            foreach (var guid in dbGuids)
+            {
+                var path = AssetDatabase.GUIDToAssetPath(guid);
+                var db   = AssetDatabase.LoadAssetAtPath<GameplayTagsData>(path);
+                if (db == null) continue;
+                foreach (var tag in db.tags)
+                    if (!string.IsNullOrWhiteSpace(tag)) explicitTags.Add(tag.Trim());
+            }
+
             var all = new HashSet<string>(explicitTags);
             foreach (var tag in explicitTags)
             {
@@ -272,22 +221,21 @@ namespace Heathen.GameplayTags.Editor
             }
 
             var sorted = all.OrderBy(p => p).ToList();
-
             var result = new List<TagEntry>();
+
             foreach (var path in sorted)
             {
-                // Apply filter: keep if path or any descendant matches
                 if (!string.IsNullOrEmpty(_filter) &&
-                    !path.Contains(_filter, System.StringComparison.OrdinalIgnoreCase) &&
+                    !path.Contains(_filter, StringComparison.OrdinalIgnoreCase) &&
                     !sorted.Any(p => p != path && p.StartsWith(path + ".") &&
-                                     p.Contains(_filter, System.StringComparison.OrdinalIgnoreCase)))
+                                     p.Contains(_filter, StringComparison.OrdinalIgnoreCase)))
                     continue;
 
-                var dotIndex = path.LastIndexOf('.');
+                var dotIdx = path.LastIndexOf('.');
                 result.Add(new TagEntry
                 {
                     FullPath    = path,
-                    Segment     = dotIndex < 0 ? path : path.Substring(dotIndex + 1),
+                    Segment     = dotIdx < 0 ? path : path.Substring(dotIdx + 1),
                     Depth       = path.Count(c => c == '.'),
                     IsVirtual   = !explicitTags.Contains(path),
                     HasChildren = sorted.Any(p => p.StartsWith(path + ".")),
@@ -303,25 +251,19 @@ namespace Heathen.GameplayTags.Editor
             {
                 EditorGUILayout.HelpBox(
                     string.IsNullOrEmpty(_filter)
-                        ? "No tags registered. Select a database and add tags above."
+                        ? "No tags found. Select a source and add tags above."
                         : "No tags match the filter.",
                     MessageType.None);
                 return;
             }
 
-            // Collapse state: if a parent is collapsed, skip all children
             var collapsed = new HashSet<string>();
-
             foreach (var entry in tree)
             {
-                // Skip children of collapsed nodes
-                if (collapsed.Any(c => entry.FullPath.StartsWith(c + ".")))
-                    continue;
-
+                if (collapsed.Any(c => entry.FullPath.StartsWith(c + "."))) continue;
                 DrawTagRow(entry, collapsed);
             }
 
-            // Consume any lingering Enter key
             if (Event.current.isKey && Event.current.keyCode == KeyCode.Escape)
             {
                 _editingPath = null;
@@ -339,72 +281,58 @@ namespace Heathen.GameplayTags.Editor
             var rowRect = GUILayoutUtility.GetRect(0, EditorGUIUtility.singleLineHeight + 2,
                 GUILayout.ExpandWidth(true));
 
-            float x = rowRect.x + entry.Depth * indent;
-            float y = rowRect.y + 1;
-            float h = EditorGUIUtility.singleLineHeight;
+            float x      = rowRect.x + entry.Depth * indent;
+            float y      = rowRect.y + 1;
+            float h      = EditorGUIUtility.singleLineHeight;
             float availW = rowRect.xMax - x - xBtnW - 2;
 
-            // Foldout triangle for nodes with children
             if (entry.HasChildren)
             {
-                bool isExpanded = !collapsed.Contains(entry.FullPath) &&
-                                  _expanded.GetValueOrDefault(entry.FullPath, true);
-                var foldRect = new Rect(x, y, foldW, h);
-                bool nowExpanded = EditorGUI.Foldout(foldRect, isExpanded, GUIContent.none);
+                bool isExpanded  = !collapsed.Contains(entry.FullPath) &&
+                                   _expanded.GetValueOrDefault(entry.FullPath, true);
+                bool nowExpanded = EditorGUI.Foldout(new Rect(x, y, foldW, h), isExpanded, GUIContent.none);
                 if (nowExpanded != isExpanded)
                 {
                     _expanded[entry.FullPath] = nowExpanded;
                     if (!nowExpanded) collapsed.Add(entry.FullPath);
                     Repaint();
                 }
-                x += foldW;
-                availW -= foldW;
+                x += foldW; availW -= foldW;
             }
             else
             {
-                x += foldW; availW -= foldW; // keep alignment
+                x += foldW; availW -= foldW;
             }
 
             var contentRect = new Rect(x, y, availW, h);
             var deleteRect  = new Rect(rowRect.xMax - xBtnW, y, xBtnW, h);
 
-            // ── Content: editing or label ────────────────────────────────────
+            // ── Content: inline edit or label ────────────────────────────────
 
-            if (_editingPath == entry.FullPath)
+            if (!entry.IsVirtual && _editingPath == entry.FullPath)
             {
                 var ctrlName = "TagEdit_" + entry.FullPath;
                 GUI.SetNextControlName(ctrlName);
                 _editBuffer = EditorGUI.TextField(contentRect, _editBuffer);
 
-                if (_focusEdit)
-                {
-                    EditorGUI.FocusTextInControl(ctrlName);
-                    _focusEdit = false;
-                }
+                if (_focusEdit) { EditorGUI.FocusTextInControl(ctrlName); _focusEdit = false; }
 
                 var ev = Event.current;
                 if (ev.isKey)
                 {
                     if (ev.keyCode == KeyCode.Return || ev.keyCode == KeyCode.KeypadEnter)
-                    {
-                        CommitRename(entry.FullPath, _editBuffer);
-                        ev.Use();
-                    }
+                    { CommitRename(entry.FullPath, _editBuffer); ev.Use(); }
                     else if (ev.keyCode == KeyCode.Escape)
-                    {
-                        _editingPath = null;
-                        ev.Use();
-                        Repaint();
-                    }
+                    { _editingPath = null; ev.Use(); Repaint(); }
                 }
             }
             else
             {
-                var style = entry.IsVirtual ? VirtualStyle : EditorStyles.label;
-                EditorGUI.LabelField(contentRect, entry.Segment, style);
+                EditorGUI.LabelField(contentRect, entry.Segment,
+                    entry.IsVirtual ? VirtualStyle : EditorStyles.label);
 
-                // Click to begin editing
-                if (Event.current.type == EventType.MouseDown &&
+                if (!entry.IsVirtual &&
+                    Event.current.type == EventType.MouseDown &&
                     contentRect.Contains(Event.current.mousePosition))
                 {
                     _editingPath = entry.FullPath;
@@ -415,16 +343,19 @@ namespace Heathen.GameplayTags.Editor
                 }
             }
 
-            // ── [x] delete button ────────────────────────────────────────────
+            // ── Delete button (not for virtual/implied nodes) ────────────────
 
-            var prevColor = GUI.contentColor;
-            GUI.contentColor = new Color(1f, 0.4f, 0.4f);
-            if (GUI.Button(deleteRect, "✕", EditorStyles.miniButton))
-                ConfirmDelete(entry);
-            GUI.contentColor = prevColor;
+            if (!entry.IsVirtual)
+            {
+                var prev = GUI.contentColor;
+                GUI.contentColor = new Color(1f, 0.4f, 0.4f);
+                if (GUI.Button(deleteRect, "✕", EditorStyles.miniButton))
+                    ConfirmDelete(entry.FullPath);
+                GUI.contentColor = prev;
+            }
         }
 
-        // ── Rename ───────────────────────────────────────────────────────────
+        // ── Mutations ────────────────────────────────────────────────────────
 
         private void CommitNewTag()
         {
@@ -432,56 +363,85 @@ namespace Heathen.GameplayTags.Editor
             if (!GameplayTagRegistry.ValidateTag(trimmed))
             {
                 EditorUtility.DisplayDialog("Invalid Tag",
-                    $"'{trimmed}' is not a valid tag.\nUse dot-separated PascalCase segments, e.g. Effects.Buff.Strength.",
+                    $"'{trimmed}' is not a valid tag.\n" +
+                    "Use dot-separated PascalCase segments, e.g. Effects.Buff.Strength.",
                     "OK");
                 return;
             }
 
-            Undo.RecordObject(_activeDatabase, "Add Gameplay Tag");
-            _activeDatabase.tags.Add(trimmed);
-            EditorUtility.SetDirty(_activeDatabase);
-            GameplayTagRegistry.RegisterDefaults(_activeDatabase);
+            if (_activeSourcePath.EndsWith(".gptags", StringComparison.OrdinalIgnoreCase))
+            {
+                var tags = ReadGpTagsSourceTags(_activeSourcePath);
+                if (!tags.Contains(trimmed))
+                {
+                    tags.Add(trimmed);
+                    WriteGpTagsSourceTags(_activeSourcePath, tags);
+                }
+            }
+            else
+            {
+                var db = AssetDatabase.LoadAssetAtPath<GameplayTagsData>(_activeSourcePath);
+                if (db == null) return;
+                Undo.RecordObject(db, "Add Gameplay Tag");
+                if (!db.tags.Contains(trimmed))
+                {
+                    db.tags.Add(trimmed);
+                    EditorUtility.SetDirty(db);
+                    GameplayTagRegistry.RegisterDefaults(db);
+                }
+            }
+
             _newTag = "";
             GUI.FocusControl(null);
+            Repaint();
         }
 
         private void CommitRename(string oldFullPath, string newSegment)
         {
             _editingPath = null;
-
             var trimmed = newSegment.Trim();
             if (string.IsNullOrEmpty(trimmed)) { Repaint(); return; }
 
-            // Build the new full path by replacing only the renamed segment
-            var dotIndex = oldFullPath.LastIndexOf('.');
-            var newFullPath = dotIndex < 0 ? trimmed : oldFullPath.Substring(0, dotIndex + 1) + trimmed;
-
+            var dotIdx     = oldFullPath.LastIndexOf('.');
+            var newFullPath = dotIdx < 0 ? trimmed : oldFullPath.Substring(0, dotIdx + 1) + trimmed;
             if (newFullPath == oldFullPath) { Repaint(); return; }
 
             if (!GameplayTagRegistry.ValidateTag(newFullPath))
             {
-                EditorUtility.DisplayDialog("Invalid Name",
-                    $"'{newFullPath}' is not a valid tag path.", "OK");
+                EditorUtility.DisplayDialog("Invalid Name", $"'{newFullPath}' is not a valid tag path.", "OK");
                 Repaint();
                 return;
             }
 
-            // Apply across all databases
-            bool changed = false;
-            foreach (var db in _settings.GetAllDatabases())
+            // Update all .gptags source files
+            var gpGuids = AssetDatabase.FindAssets("t:GameplayTagsCompiledData");
+            foreach (var guid in gpGuids)
             {
+                var path = AssetDatabase.GUIDToAssetPath(guid);
+                if (!path.EndsWith(".gptags", StringComparison.OrdinalIgnoreCase)) continue;
+                RenameInGpTagsFile(path, oldFullPath, newFullPath);
+            }
+
+            // Update all GameplayTagsData assets
+            var dbGuids = AssetDatabase.FindAssets("t:GameplayTagsData");
+            foreach (var guid in dbGuids)
+            {
+                var path = AssetDatabase.GUIDToAssetPath(guid);
+                var db   = AssetDatabase.LoadAssetAtPath<GameplayTagsData>(path);
+                if (db == null) continue;
+                bool changed = false;
                 for (int i = 0; i < db.tags.Count; i++)
                 {
                     var t = db.tags[i];
                     if (t == oldFullPath)
                     {
-                        Undo.RecordObject(db, "Rename Gameplay Tag");
+                        if (!changed) Undo.RecordObject(db, "Rename Gameplay Tag");
                         db.tags[i] = newFullPath;
                         changed = true;
                     }
                     else if (t.StartsWith(oldFullPath + "."))
                     {
-                        Undo.RecordObject(db, "Rename Gameplay Tag");
+                        if (!changed) Undo.RecordObject(db, "Rename Gameplay Tag");
                         db.tags[i] = newFullPath + t.Substring(oldFullPath.Length);
                         changed = true;
                     }
@@ -493,65 +453,122 @@ namespace Heathen.GameplayTags.Editor
             Repaint();
         }
 
-        // ── Delete ───────────────────────────────────────────────────────────
-
-        private void ConfirmDelete(TagEntry entry)
+        private void ConfirmDelete(string fullPath)
         {
-            // Collect everything that would be removed
-            var toRemove = new List<(GameplayTagsData db, string tag)>();
-            foreach (var db in _settings.GetAllDatabases())
+            // Count how many tags will be removed across all sources
+            var gpTagsChanges = new Dictionary<string, List<string>>();
+            var dbChanges     = new List<(GameplayTagsData db, List<string> toRemove)>();
+
+            var gpGuids = AssetDatabase.FindAssets("t:GameplayTagsCompiledData");
+            foreach (var guid in gpGuids)
             {
-                foreach (var tag in db.tags)
-                {
-                    if (tag == entry.FullPath || tag.StartsWith(entry.FullPath + "."))
-                        toRemove.Add((db, tag));
-                }
+                var path = AssetDatabase.GUIDToAssetPath(guid);
+                if (!path.EndsWith(".gptags", StringComparison.OrdinalIgnoreCase)) continue;
+                var removing = ReadGpTagsSourceTags(path)
+                    .Where(t => t == fullPath || t.StartsWith(fullPath + "."))
+                    .ToList();
+                if (removing.Count > 0) gpTagsChanges[path] = removing;
             }
 
-            if (toRemove.Count == 0) return;
+            var dbGuids = AssetDatabase.FindAssets("t:GameplayTagsData");
+            foreach (var guid in dbGuids)
+            {
+                var path = AssetDatabase.GUIDToAssetPath(guid);
+                var db   = AssetDatabase.LoadAssetAtPath<GameplayTagsData>(path);
+                if (db == null) continue;
+                var removing = db.tags.Where(t => t == fullPath || t.StartsWith(fullPath + ".")).ToList();
+                if (removing.Count > 0) dbChanges.Add((db, removing));
+            }
 
-            string msg = toRemove.Count == 1
-                ? $"Remove tag '{toRemove[0].tag}'?"
-                : $"This will remove {toRemove.Count} tags:\n\n" +
-                  string.Join("\n", toRemove.Select(r => $"  • {r.tag}")) +
-                  "\n\nAre you sure?";
+            int total = gpTagsChanges.Values.Sum(l => l.Count) + dbChanges.Sum(x => x.toRemove.Count);
+            if (total == 0) return;
 
-            if (!EditorUtility.DisplayDialog("Remove Tag" + (toRemove.Count > 1 ? "s" : ""),
-                msg, "Remove", "Cancel"))
+            var msg = total == 1
+                ? $"Remove tag '{fullPath}'?"
+                : $"Remove '{fullPath}' and all {total} tags in that subtree?";
+
+            if (!EditorUtility.DisplayDialog("Remove Tag" + (total > 1 ? "s" : ""), msg, "Remove", "Cancel"))
                 return;
 
-            foreach (var (db, tag) in toRemove)
+            foreach (var (path, removing) in gpTagsChanges)
+            {
+                var tags = ReadGpTagsSourceTags(path);
+                foreach (var r in removing) tags.Remove(r);
+                WriteGpTagsSourceTags(path, tags);
+            }
+
+            foreach (var (db, removing) in dbChanges)
             {
                 Undo.RecordObject(db, "Remove Gameplay Tag");
-                db.tags.Remove(tag);
+                foreach (var r in removing) db.tags.Remove(r);
                 EditorUtility.SetDirty(db);
             }
 
-            if (_editingPath == entry.FullPath) _editingPath = null;
+            if (_editingPath == fullPath) _editingPath = null;
             GameplayTagsDataEditor.ForceRefresh();
             Repaint();
         }
 
-        // ── Helpers ──────────────────────────────────────────────────────────
+        // ── .gptags file I/O ─────────────────────────────────────────────────
 
-        private void CreateDatabase()
+        private static List<string> ReadGpTagsSourceTags(string assetPath)
+        {
+            try
+            {
+                var root = JObject.Parse(File.ReadAllText(assetPath));
+                return root["tags"]?.ToObject<List<string>>() ?? new List<string>();
+            }
+            catch { return new List<string>(); }
+        }
+
+        private static void WriteGpTagsSourceTags(string assetPath, List<string> tags, bool registered = true)
+        {
+            var root = new JObject
+            {
+                ["registered"] = registered,
+                ["tags"]       = JArray.FromObject(tags)
+            };
+            File.WriteAllText(assetPath, root.ToString(Newtonsoft.Json.Formatting.Indented));
+            AssetDatabase.ImportAsset(assetPath, ImportAssetOptions.ForceUpdate);
+        }
+
+        private static void RenameInGpTagsFile(string assetPath, string oldFullPath, string newFullPath)
+        {
+            var tags    = ReadGpTagsSourceTags(assetPath);
+            bool changed = false;
+            for (int i = 0; i < tags.Count; i++)
+            {
+                if (tags[i] == oldFullPath)
+                {
+                    tags[i]  = newFullPath;
+                    changed  = true;
+                }
+                else if (tags[i].StartsWith(oldFullPath + "."))
+                {
+                    tags[i]  = newFullPath + tags[i].Substring(oldFullPath.Length);
+                    changed  = true;
+                }
+            }
+            if (changed) WriteGpTagsSourceTags(assetPath, tags);
+        }
+
+        // ── Create new .gptags file ──────────────────────────────────────────
+
+        private void CreateGpTagsFile()
         {
             var path = EditorUtility.SaveFilePanelInProject(
-                "New Tag Database", "TagDatabase", "asset", "Choose save location");
+                "New Tag Source", "TagSource", "gptags", "Choose save location");
             if (string.IsNullOrEmpty(path)) return;
 
-            var asset = ScriptableObject.CreateInstance<GameplayTagsData>();
-            AssetDatabase.CreateAsset(asset, path);
-            AssetDatabase.SaveAssets();
-
-            if (!_settings.databases.Contains(asset))
+            var root = new JObject
             {
-                Undo.RecordObject(_settings, "Pin Tag Database");
-                _settings.databases.Add(asset);
-                EditorUtility.SetDirty(_settings);
-            }
-            _activeDatabase = asset;
-            GameplayTagsDataEditor.ForceRefresh();
+                ["registered"] = true,
+                ["tags"]       = new JArray()
+            };
+            File.WriteAllText(path, root.ToString(Newtonsoft.Json.Formatting.Indented));
+            AssetDatabase.ImportAsset(path);
+            _activeSourcePath = path;
+            Repaint();
         }
     }
 }
