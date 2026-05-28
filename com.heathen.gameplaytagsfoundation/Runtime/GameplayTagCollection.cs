@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Runtime.InteropServices;
 using Unity.Collections;
 using UnityEngine;
 
@@ -100,6 +101,30 @@ namespace Heathen.GameplayTags
         {
             _map.TryGetValue(tag.Id, out var v);
             return v;
+        }
+
+        // ── Typed value accessors ─────────────────────────────────────────────
+        // Underlying storage is always ulong. Zero means "not present".
+        // float/int occupy the lower 32 bits; long/double use all 64 bits.
+
+        public float  GetFloat (GameplayTag tag) => FloatUnion.ToFloat((uint)(GetValue(tag) & 0xFFFFFFFFUL));
+        public int    GetInt   (GameplayTag tag) => (int)(uint)(GetValue(tag) & 0xFFFFFFFFUL);
+        public long   GetLong  (GameplayTag tag) => (long)GetValue(tag);
+        public double GetDouble(GameplayTag tag) => DoubleUnion.ToDouble(GetValue(tag));
+
+        public void SetFloat (GameplayTag tag, float  value) => Apply(tag, GameplayTagArithmetic.Set, (ulong)FloatUnion.ToUInt(value));
+        public void SetInt   (GameplayTag tag, int    value) => Apply(tag, GameplayTagArithmetic.Set, (ulong)(uint)value);
+        public void SetLong  (GameplayTag tag, long   value) => Apply(tag, GameplayTagArithmetic.Set, (ulong)value);
+        public void SetDouble(GameplayTag tag, double value) => Apply(tag, GameplayTagArithmetic.Set, DoubleUnion.ToUlong(value));
+
+        // Stores the xxHash64 of tagPath as the value of tag.
+        // Useful for enum-like patterns: collection["Player.Class"] = "Classes.Melee.Warrior"
+        // Retrieve with: GameplayTag.FromName(GameplayTagRegistry.GetName(collection.GetValue(tag)))
+        public void SetTagValue(GameplayTag tag, string tagPath)
+        {
+            if (!GameplayTagRegistry.ValidateTag(tagPath?.Trim() ?? string.Empty))
+                throw new ArgumentException($"'{tagPath}' is not a valid GameplayTag path.", nameof(tagPath));
+            Apply(tag, GameplayTagArithmetic.Set, GameplayTagRegistry.Hash(tagPath.Trim()));
         }
 
         public bool IsEmpty => _map.Count == 0;
@@ -244,6 +269,26 @@ namespace Heathen.GameplayTags
                 if (descendantNotification && isExact) continue;
                 cb?.Invoke(changedTag, prev, next);
             }
+        }
+
+        // ── Bit-reinterpretation helpers (no unsafe required) ─────────────────
+
+        [StructLayout(LayoutKind.Explicit)]
+        private struct FloatUnion
+        {
+            [FieldOffset(0)] private float _f;
+            [FieldOffset(0)] private uint  _u;
+            public static uint  ToUInt (float f) => new FloatUnion { _f = f }._u;
+            public static float ToFloat(uint  u) => new FloatUnion { _u = u }._f;
+        }
+
+        [StructLayout(LayoutKind.Explicit)]
+        private struct DoubleUnion
+        {
+            [FieldOffset(0)] private double _f;
+            [FieldOffset(0)] private ulong  _u;
+            public static ulong  ToUlong (double f) => new DoubleUnion { _f = f }._u;
+            public static double ToDouble(ulong  u) => new DoubleUnion { _u = u }._f;
         }
     }
 }
