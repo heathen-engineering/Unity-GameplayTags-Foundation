@@ -19,6 +19,15 @@ namespace Heathen.GameplayTags
         public bool Evaluate(GameplayTagCollection collection)
         {
             ulong lhs = GetValue(collection);
+
+            // Tag-identity operators treat lhs as a tag id and compare against CompareTag directly.
+            if (Comparison == GameplayTagComparisonOp.IsMemberOf)
+                return CompareTag.IsValid && new GameplayTag(lhs).IsChildOf(CompareTag);
+            if (Comparison == GameplayTagComparisonOp.IsParentOf)
+                return CompareTag.IsValid && new GameplayTag(lhs).IsParentOf(CompareTag);
+            if (Comparison == GameplayTagComparisonOp.IsExactly)
+                return CompareTag.IsValid && lhs == CompareTag.Id;
+
             ulong rhs = CompareTag.Id != 0 ? collection.GetValue(CompareTag) : CompareValue;
             return Comparison switch
             {

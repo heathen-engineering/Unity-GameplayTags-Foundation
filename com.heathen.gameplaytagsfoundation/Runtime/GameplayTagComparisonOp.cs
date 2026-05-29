@@ -10,5 +10,8 @@ namespace Heathen.GameplayTags
         LessEqual    = 5,   // value <= compareValue
         Greater      = 6,   // value > compareValue
         GreaterEqual = 7,   // value >= compareValue
+        IsMemberOf   = 8,   // value (as tag id) is a descendant of CompareTag
+        IsParentOf   = 9,   // value (as tag id) is an ancestor of CompareTag
+        IsExactly    = 10,  // value (as tag id) equals CompareTag exactly
     }
 }

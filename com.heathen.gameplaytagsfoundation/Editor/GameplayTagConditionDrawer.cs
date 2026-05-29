@@ -6,7 +6,7 @@ namespace Heathen.GameplayTags.Editor
     [CustomPropertyDrawer(typeof(GameplayTagCondition))]
     public class GameplayTagConditionDrawer : PropertyDrawer
     {
-        // Layout: [Tag 32%] [Comparison 22%] [CompareValue 14%] [Exact 8%] [LogicOp 18%]
+        // Layout: [Tag 32%] [Comparison 22%] [CompareValue|CompareTag 14%] [Exact 38px] [LogicOp rest]
         public override void OnGUI(Rect position, SerializedProperty property, GUIContent label)
         {
             EditorGUI.BeginProperty(position, label, property);
@@ -24,21 +24,29 @@ namespace Heathen.GameplayTags.Editor
             float logicW  = w - tagW - compW - valW - exactW - gap * 5;
 
             float cx = x;
-            var tagRect   = new Rect(cx,                y, tagW,   h); cx += tagW + gap;
-            var compRect  = new Rect(cx,                y, compW,  h); cx += compW + gap;
-            var valRect   = new Rect(cx,                y, valW,   h); cx += valW + gap;
-            var exactRect = new Rect(cx,                y, exactW, h); cx += exactW + gap;
-            var logicRect = new Rect(cx,                y, logicW, h);
+            var tagRect   = new Rect(cx, y, tagW,   h); cx += tagW + gap;
+            var compRect  = new Rect(cx, y, compW,  h); cx += compW + gap;
+            var valRect   = new Rect(cx, y, valW,   h); cx += valW + gap;
+            var exactRect = new Rect(cx, y, exactW, h); cx += exactW + gap;
+            var logicRect = new Rect(cx, y, logicW, h);
 
             var compProp = property.FindPropertyRelative("Comparison");
-            bool needsValue = NeedsCompareValue((GameplayTagComparisonOp)compProp.enumValueIndex);
+            var op = (GameplayTagComparisonOp)compProp.enumValueIndex;
 
             EditorGUI.PropertyField(tagRect,  property.FindPropertyRelative("Tag"),        GUIContent.none);
             EditorGUI.PropertyField(compRect, compProp,                                     GUIContent.none);
 
-            EditorGUI.BeginDisabledGroup(!needsValue);
-            EditorGUI.PropertyField(valRect,  property.FindPropertyRelative("CompareValue"), GUIContent.none);
-            EditorGUI.EndDisabledGroup();
+            if (IsTagIdentityOp(op))
+            {
+                // Show CompareTag picker — the reference tag for IsMemberOf / IsParentOf / IsExactly.
+                EditorGUI.PropertyField(valRect, property.FindPropertyRelative("CompareTag"), GUIContent.none);
+            }
+            else
+            {
+                EditorGUI.BeginDisabledGroup(!NeedsCompareValue(op));
+                EditorGUI.PropertyField(valRect, property.FindPropertyRelative("CompareValue"), GUIContent.none);
+                EditorGUI.EndDisabledGroup();
+            }
 
             // ExactMatch toggle with label
             EditorGUI.LabelField(new Rect(exactRect.x, exactRect.y, 28, h), "Exct");
@@ -53,6 +61,11 @@ namespace Heathen.GameplayTags.Editor
 
         private static bool NeedsCompareValue(GameplayTagComparisonOp op) =>
             op != GameplayTagComparisonOp.Exists && op != GameplayTagComparisonOp.NotExists;
+
+        private static bool IsTagIdentityOp(GameplayTagComparisonOp op) =>
+            op == GameplayTagComparisonOp.IsMemberOf ||
+            op == GameplayTagComparisonOp.IsParentOf ||
+            op == GameplayTagComparisonOp.IsExactly;
 
         public override float GetPropertyHeight(SerializedProperty property, GUIContent label) =>
             EditorGUIUtility.singleLineHeight;

@@ -10,6 +10,8 @@ namespace Heathen.GameplayTags
         public GameplayTag Tag;
         public GameplayTagArithmetic Arithmetic = GameplayTagArithmetic.Set;
         public ulong Value = 1;
+        // When valid, the operand is resolved from the collection at apply time instead of using Value.
+        public GameplayTag ValueTag;
         public List<GameplayTagCondition> Conditions = new();
 
         // Returns true if conditions are met (or there are none).
@@ -20,7 +22,8 @@ namespace Heathen.GameplayTags
         public bool Apply(GameplayTagCollection collection)
         {
             if (!ShouldApply(collection)) return false;
-            collection.Apply(Tag, Arithmetic, Value);
+            var operand = ValueTag.IsValid ? collection.GetValue(ValueTag) : Value;
+            collection.Apply(Tag, Arithmetic, operand);
             return true;
         }
     }

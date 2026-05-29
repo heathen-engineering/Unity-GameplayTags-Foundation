@@ -16,17 +16,31 @@ namespace Heathen.GameplayTags.Editor
             float h = EditorGUIUtility.singleLineHeight;
             float gap = 3f;
 
-            float tagW   = w * 0.38f;
-            float arithW = w * 0.27f;
-            float valW   = w - tagW - arithW - gap * 2;
+            // Layout: [Tag 33%] [Arithmetic 24%] [Value 17%] [ValueTag rest]
+            float tagW      = w * 0.33f;
+            float arithW    = w * 0.24f;
+            float valW      = w * 0.17f;
+            float valTagW   = w - tagW - arithW - valW - gap * 3;
 
-            var tagRect   = new Rect(x,                    y, tagW,   h);
-            var arithRect = new Rect(x + tagW + gap,       y, arithW, h);
-            var valRect   = new Rect(x + tagW + arithW + gap * 2, y, valW, h);
+            float cx = x;
+            var tagRect    = new Rect(cx, y, tagW,    h); cx += tagW + gap;
+            var arithRect  = new Rect(cx, y, arithW,  h); cx += arithW + gap;
+            var valRect    = new Rect(cx, y, valW,    h); cx += valW + gap;
+            var valTagRect = new Rect(cx, y, valTagW, h);
+
+            var valueTagProp = property.FindPropertyRelative("ValueTag");
+            var valueTagId   = valueTagProp.FindPropertyRelative("_id");
+            bool hasValueTag = valueTagId != null && valueTagId.ulongValue != 0;
 
             EditorGUI.PropertyField(tagRect,   property.FindPropertyRelative("Tag"),        GUIContent.none);
             EditorGUI.PropertyField(arithRect, property.FindPropertyRelative("Arithmetic"), GUIContent.none);
-            EditorGUI.PropertyField(valRect,   property.FindPropertyRelative("Value"),      GUIContent.none);
+
+            // Grey out the constant value when a ValueTag is driving the operand.
+            EditorGUI.BeginDisabledGroup(hasValueTag);
+            EditorGUI.PropertyField(valRect, property.FindPropertyRelative("Value"), GUIContent.none);
+            EditorGUI.EndDisabledGroup();
+
+            EditorGUI.PropertyField(valTagRect, valueTagProp, GUIContent.none);
 
             var condProp = property.FindPropertyRelative("Conditions");
             if (condProp != null)
