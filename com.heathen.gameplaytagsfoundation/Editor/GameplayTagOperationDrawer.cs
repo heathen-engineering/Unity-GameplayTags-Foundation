@@ -10,37 +10,48 @@ namespace Heathen.GameplayTags.Editor
         {
             EditorGUI.BeginProperty(position, label, property);
 
-            float w = position.width;
-            float x = position.x;
-            float y = position.y;
-            float h = EditorGUIUtility.singleLineHeight;
+            float w   = position.width;
+            float x   = position.x;
+            float y   = position.y;
+            float h   = EditorGUIUtility.singleLineHeight;
             float gap = 3f;
 
-            // Layout: [Tag 33%] [Arithmetic 24%] [Value 17%] [ValueTag rest]
-            float tagW      = w * 0.33f;
-            float arithW    = w * 0.24f;
-            float valW      = w * 0.17f;
-            float valTagW   = w - tagW - arithW - valW - gap * 3;
+            var valueTypeProp = property.FindPropertyRelative("ValueType");
+            var valueTagProp  = property.FindPropertyRelative("ValueTag");
+            var valueTagId    = valueTagProp?.FindPropertyRelative("_id");
+            var vt            = valueTypeProp != null
+                ? (GameplayTagValueType)valueTypeProp.enumValueIndex
+                : GameplayTagValueType.Unsigned;
+
+            // Layout: [Tag 30%] [Arithmetic 22%] [Type 8%] [Value/ValueTag rest]
+            float tagW    = w * 0.30f;
+            float arithW  = w * 0.22f;
+            float typeW   = w * 0.08f;
+            float valW    = w - tagW - arithW - typeW - gap * 3;
 
             float cx = x;
-            var tagRect    = new Rect(cx, y, tagW,    h); cx += tagW + gap;
-            var arithRect  = new Rect(cx, y, arithW,  h); cx += arithW + gap;
-            var valRect    = new Rect(cx, y, valW,    h); cx += valW + gap;
-            var valTagRect = new Rect(cx, y, valTagW, h);
-
-            var valueTagProp = property.FindPropertyRelative("ValueTag");
-            var valueTagId   = valueTagProp.FindPropertyRelative("_id");
-            bool hasValueTag = valueTagId != null && valueTagId.ulongValue != 0;
+            var tagRect   = new Rect(cx, y, tagW,   h); cx += tagW   + gap;
+            var arithRect = new Rect(cx, y, arithW, h); cx += arithW + gap;
+            var typeRect  = new Rect(cx, y, typeW,  h); cx += typeW  + gap;
+            var valRect   = new Rect(cx, y, valW,   h);
 
             EditorGUI.PropertyField(tagRect,   property.FindPropertyRelative("Tag"),        GUIContent.none);
             EditorGUI.PropertyField(arithRect, property.FindPropertyRelative("Arithmetic"), GUIContent.none);
+            if (valueTypeProp != null)
+                EditorGUI.PropertyField(typeRect, valueTypeProp, GUIContent.none);
 
-            // Grey out the constant value when a ValueTag is driving the operand.
-            EditorGUI.BeginDisabledGroup(hasValueTag);
-            EditorGUI.PropertyField(valRect, property.FindPropertyRelative("Value"), GUIContent.none);
-            EditorGUI.EndDisabledGroup();
-
-            EditorGUI.PropertyField(valTagRect, valueTagProp, GUIContent.none);
+            // Show Value when Unsigned/Signed/Decimal, ValueTag when Tag type.
+            bool isTagType = vt == GameplayTagValueType.Tag
+                || (valueTagId != null && valueTagId.ulongValue != 0);
+            if (isTagType)
+            {
+                if (valueTagProp != null)
+                    EditorGUI.PropertyField(valRect, valueTagProp, GUIContent.none);
+            }
+            else
+            {
+                EditorGUI.PropertyField(valRect, property.FindPropertyRelative("Value"), GUIContent.none);
+            }
 
             var condProp = property.FindPropertyRelative("Conditions");
             if (condProp != null)

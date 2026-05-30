@@ -15,32 +15,67 @@ namespace Heathen.GameplayTags
         public GameplayTag CompareTag;
         public bool ExactMatch = true;
         public GameplayTagLogicOp LogicOp = GameplayTagLogicOp.And;
+        // Controls how CompareValue is interpreted and how the comparison is performed.
+        public GameplayTagValueType CompareValueType = GameplayTagValueType.Unsigned;
 
         public bool Evaluate(GameplayTagCollection collection)
         {
-            ulong lhs = GetValue(collection);
+            ulong lhsRaw = GetValue(collection);
 
-            // Tag-identity operators treat lhs as a tag id and compare against CompareTag directly.
+            // Tag-identity operators treat lhsRaw as a tag id — not affected by CompareValueType.
             if (Comparison == GameplayTagComparisonOp.IsMemberOf)
-                return CompareTag.IsValid && new GameplayTag(lhs).IsChildOf(CompareTag);
+                return CompareTag.IsValid && new GameplayTag(lhsRaw).IsChildOf(CompareTag);
             if (Comparison == GameplayTagComparisonOp.IsParentOf)
-                return CompareTag.IsValid && new GameplayTag(lhs).IsParentOf(CompareTag);
+                return CompareTag.IsValid && new GameplayTag(lhsRaw).IsParentOf(CompareTag);
             if (Comparison == GameplayTagComparisonOp.IsExactly)
-                return CompareTag.IsValid && lhs == CompareTag.Id;
+                return CompareTag.IsValid && lhsRaw == CompareTag.Id;
 
-            ulong rhs = CompareTag.Id != 0 ? collection.GetValue(CompareTag) : CompareValue;
-            return Comparison switch
+            // Exists/NotExists are presence checks — not affected by value type.
+            if (Comparison == GameplayTagComparisonOp.Exists)    return lhsRaw != 0;
+            if (Comparison == GameplayTagComparisonOp.NotExists) return lhsRaw == 0;
+
+            ulong rhsRaw = CompareTag.Id != 0 ? collection.GetValue(CompareTag) : CompareValue;
+            switch (CompareValueType)
             {
-                GameplayTagComparisonOp.Exists       => lhs != 0,
-                GameplayTagComparisonOp.NotExists    => lhs == 0,
-                GameplayTagComparisonOp.Equal        => lhs == rhs,
-                GameplayTagComparisonOp.NotEqual     => lhs != rhs,
-                GameplayTagComparisonOp.Less         => lhs < rhs,
-                GameplayTagComparisonOp.LessEqual    => lhs <= rhs,
-                GameplayTagComparisonOp.Greater      => lhs > rhs,
-                GameplayTagComparisonOp.GreaterEqual => lhs >= rhs,
-                _                                    => false,
-            };
+                case GameplayTagValueType.Signed:
+                {
+                    long lhs = (long)lhsRaw;
+                    long rhs = (long)rhsRaw;
+                    return Comparison switch {
+                        GameplayTagComparisonOp.Equal        => lhs == rhs,
+                        GameplayTagComparisonOp.NotEqual     => lhs != rhs,
+                        GameplayTagComparisonOp.Less         => lhs < rhs,
+                        GameplayTagComparisonOp.LessEqual    => lhs <= rhs,
+                        GameplayTagComparisonOp.Greater      => lhs > rhs,
+                        GameplayTagComparisonOp.GreaterEqual => lhs >= rhs,
+                        _                                    => false,
+                    };
+                }
+                case GameplayTagValueType.Decimal:
+                {
+                    double lhs = System.BitConverter.Int64BitsToDouble((long)lhsRaw);
+                    double rhs = System.BitConverter.Int64BitsToDouble((long)rhsRaw);
+                    return Comparison switch {
+                        GameplayTagComparisonOp.Equal        => lhs.Equals(rhs),
+                        GameplayTagComparisonOp.NotEqual     => !lhs.Equals(rhs),
+                        GameplayTagComparisonOp.Less         => lhs < rhs,
+                        GameplayTagComparisonOp.LessEqual    => lhs <= rhs,
+                        GameplayTagComparisonOp.Greater      => lhs > rhs,
+                        GameplayTagComparisonOp.GreaterEqual => lhs >= rhs,
+                        _                                    => false,
+                    };
+                }
+                default: // Unsigned or Tag (CompareTag already baked into rhsRaw above)
+                    return Comparison switch {
+                        GameplayTagComparisonOp.Equal        => lhsRaw == rhsRaw,
+                        GameplayTagComparisonOp.NotEqual     => lhsRaw != rhsRaw,
+                        GameplayTagComparisonOp.Less         => lhsRaw < rhsRaw,
+                        GameplayTagComparisonOp.LessEqual    => lhsRaw <= rhsRaw,
+                        GameplayTagComparisonOp.Greater      => lhsRaw > rhsRaw,
+                        GameplayTagComparisonOp.GreaterEqual => lhsRaw >= rhsRaw,
+                        _                                    => false,
+                    };
+            }
         }
 
         private ulong GetValue(GameplayTagCollection collection)
