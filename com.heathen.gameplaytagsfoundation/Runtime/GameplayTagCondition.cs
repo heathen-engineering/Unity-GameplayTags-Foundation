@@ -4,20 +4,61 @@ using UnityEngine;
 
 namespace Heathen.GameplayTags
 {
+    /// <summary>
+    /// A serialisable rule that compares a <see cref="GameplayTag"/>'s value within a
+    /// <see cref="GameplayTagCollection"/> against a constant or another tag's value.
+    /// Multiple conditions are combined via <see cref="LogicOp"/> using AND-before-OR-before-XOR
+    /// precedence when evaluated through <see cref="EvaluateAll"/>.
+    /// </summary>
     [Serializable]
     public class GameplayTagCondition
     {
+        /// <summary>The tag whose value is read from the collection as the left-hand operand.</summary>
         public GameplayTag Tag;
+
+        /// <summary>The comparison operator applied between the tag's value and the compare value.</summary>
         public GameplayTagComparisonOp Comparison = GameplayTagComparisonOp.Exists;
+
+        /// <summary>
+        /// The constant right-hand operand used when <see cref="CompareTag"/> is not set.
+        /// Interpreted according to <see cref="CompareValueType"/>.
+        /// </summary>
         public ulong CompareValue = 1;
-        // When Id != 0, the right-hand side is drawn from the collection at runtime
-        // instead of the constant CompareValue. Enables tag-vs-tag comparisons.
+
+        /// <summary>
+        /// When valid, the right-hand side of the comparison is resolved from this tag's value
+        /// in the collection at evaluation time rather than using the constant <see cref="CompareValue"/>.
+        /// This enables tag-versus-tag comparisons.
+        /// </summary>
         public GameplayTag CompareTag;
+
+        /// <summary>
+        /// When <c>true</c>, only the exact tag is read; when <c>false</c>, the maximum value
+        /// across the tag and all of its registered descendants is used as the left-hand operand.
+        /// </summary>
         public bool ExactMatch = true;
+
+        /// <summary>
+        /// The logical operator used to combine this condition's result with the next condition
+        /// in a list evaluated by <see cref="EvaluateAll"/>. AND has highest precedence,
+        /// followed by OR, then XOR.
+        /// </summary>
         public GameplayTagLogicOp LogicOp = GameplayTagLogicOp.And;
-        // Controls how CompareValue is interpreted and how the comparison is performed.
+
+        /// <summary>
+        /// Controls how <see cref="CompareValue"/> (and the tag's stored value) are interpreted
+        /// during numeric comparisons. Tag-identity operators (<see cref="GameplayTagComparisonOp.IsMemberOf"/> etc.)
+        /// are unaffected by this setting.
+        /// </summary>
         public GameplayTagValueType CompareValueType = GameplayTagValueType.Unsigned;
 
+        /// <summary>
+        /// Evaluates this condition against the provided <paramref name="collection"/> and
+        /// returns whether the condition passes. The result is determined by reading the tag's
+        /// value, applying the comparison operator, and respecting the value type interpretation.
+        /// </summary>
+        /// <param name="collection">The collection to read tag values from.</param>
+        /// <returns><c>true</c> if this condition's comparison passes; otherwise <c>false</c>.</returns>
         public bool Evaluate(GameplayTagCollection collection)
         {
             ulong lhsRaw = GetValue(collection);
@@ -93,7 +134,14 @@ namespace Heathen.GameplayTags
             return max;
         }
 
-        // AND > OR > XOR precedence. Empty list = true.
+        /// <summary>
+        /// Evaluates a list of conditions against <paramref name="collection"/> using
+        /// AND-before-OR-before-XOR operator precedence across the sequence. An empty or
+        /// <c>null</c> list returns <c>true</c>.
+        /// </summary>
+        /// <param name="conditions">The ordered list of conditions to evaluate.</param>
+        /// <param name="collection">The collection to read tag values from.</param>
+        /// <returns><c>true</c> if the combined result of all conditions passes; otherwise <c>false</c>.</returns>
         public static bool EvaluateAll(IList<GameplayTagCondition> conditions, GameplayTagCollection collection)
         {
             if (conditions == null || conditions.Count == 0) return true;

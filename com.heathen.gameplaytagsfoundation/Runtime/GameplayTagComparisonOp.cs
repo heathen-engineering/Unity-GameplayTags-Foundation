@@ -1,17 +1,34 @@
 namespace Heathen.GameplayTags
 {
+    /// <summary>
+    /// Specifies the comparison operator used by a <see cref="GameplayTagCondition"/> when
+    /// evaluating a tag's value against a constant or another tag's value in a
+    /// <see cref="GameplayTagCollection"/>. The interpretation of the stored value is further
+    /// controlled by <see cref="GameplayTagValueType"/>.
+    /// </summary>
     public enum GameplayTagComparisonOp : byte
     {
-        Exists       = 0,   // value != 0
-        NotExists    = 1,   // value == 0
-        Equal        = 2,   // value == compareValue
-        NotEqual     = 3,   // value != compareValue
-        Less         = 4,   // value < compareValue
-        LessEqual    = 5,   // value <= compareValue
-        Greater      = 6,   // value > compareValue
-        GreaterEqual = 7,   // value >= compareValue
-        IsMemberOf   = 8,   // value (as tag id) is a descendant of CompareTag
-        IsParentOf   = 9,   // value (as tag id) is an ancestor of CompareTag
-        IsExactly    = 10,  // value (as tag id) equals CompareTag exactly
+        /// <summary>Passes when the tag's stored value is non-zero (the tag is present).</summary>
+        Exists       = 0,
+        /// <summary>Passes when the tag's stored value is zero (the tag is absent).</summary>
+        NotExists    = 1,
+        /// <summary>Passes when the tag's value equals the compare value.</summary>
+        Equal        = 2,
+        /// <summary>Passes when the tag's value does not equal the compare value.</summary>
+        NotEqual     = 3,
+        /// <summary>Passes when the tag's value is strictly less than the compare value.</summary>
+        Less         = 4,
+        /// <summary>Passes when the tag's value is less than or equal to the compare value.</summary>
+        LessEqual    = 5,
+        /// <summary>Passes when the tag's value is strictly greater than the compare value.</summary>
+        Greater      = 6,
+        /// <summary>Passes when the tag's value is greater than or equal to the compare value.</summary>
+        GreaterEqual = 7,
+        /// <summary>Treats the stored value as a tag identifier and passes when it is a descendant of <c>CompareTag</c>.</summary>
+        IsMemberOf   = 8,
+        /// <summary>Treats the stored value as a tag identifier and passes when it is an ancestor of <c>CompareTag</c>.</summary>
+        IsParentOf   = 9,
+        /// <summary>Treats the stored value as a tag identifier and passes when it exactly matches <c>CompareTag</c>.</summary>
+        IsExactly    = 10,
     }
 }
