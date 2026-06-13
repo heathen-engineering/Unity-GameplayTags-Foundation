@@ -41,6 +41,14 @@ namespace Heathen.GameplayTags.Editor
                 compiled.Entries = compiled.AutoRegister && tags.Length > 0
                     ? BuildEntries(tags)
                     : Array.Empty<CompiledTagEntry>();
+
+                // A file with tags but no "registered": true compiles to nothing — surface that, it is
+                // almost always a mistake rather than an intentionally-disabled tag set.
+                if (!compiled.AutoRegister && tags.Length > 0)
+                    ctx.LogImportWarning(
+                        $"[GameplayTags] '{Path.GetFileNameWithoutExtension(ctx.assetPath)}.gptags' has " +
+                        $"{tags.Length} tag(s) but \"registered\" is not true — none will be registered. " +
+                        "Set \"registered\": true to activate them.");
             }
             catch (Exception e)
             {
@@ -123,6 +131,9 @@ namespace Heathen.GameplayTags.Editor
                 if (asset != null && asset.AutoRegister)
                     GameplayTagRegistry.RegisterDefaults(asset);
             }
+
+            // Keep the preloaded-assets list in sync so tag sets ship in builds and register at startup.
+            GameplayTagsPreload.EnsureTagsPreloaded();
         }
     }
 

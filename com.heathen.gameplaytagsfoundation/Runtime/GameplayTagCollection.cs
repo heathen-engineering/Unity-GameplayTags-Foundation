@@ -135,8 +135,10 @@ namespace Heathen.GameplayTags
         {
             var snapshot = new Dictionary<ulong, ulong>(_map);
             _map.Clear();
+            // Notify per-tag subscribers for each removed entry, but suppress the collection-wide
+            // Changed event until the end so listeners re-evaluate once, not once per entry.
             foreach (var kv in snapshot)
-                NotifyChange(new GameplayTag(kv.Key), kv.Value, 0);
+                NotifyChange(new GameplayTag(kv.Key), kv.Value, 0, fireChanged: false);
             Changed?.Invoke(this);
         }
 
@@ -396,12 +398,16 @@ namespace Heathen.GameplayTags
         /// <param name="exactMatch">When <c>true</c>, only changes to the exact tag trigger the callback.</param>
         public void Subscribe(GameplayTag tag, Action<GameplayTag, ulong, ulong> callback, bool exactMatch = false)
         {
+            if (callback == null) return;
             _subscribers ??= new Dictionary<ulong, List<(Action<GameplayTag, ulong, ulong>, bool)>>();
             if (!_subscribers.TryGetValue(tag.Id, out var list))
             {
                 list = new List<(Action<GameplayTag, ulong, ulong>, bool)>();
                 _subscribers[tag.Id] = list;
             }
+            // Skip an identical registration so a double-subscribe doesn't fire the callback twice.
+            for (int i = 0; i < list.Count; i++)
+                if (list[i].Item1 == callback && list[i].Item2 == exactMatch) return;
             list.Add((callback, exactMatch));
         }
 
@@ -439,22 +445,26 @@ namespace Heathen.GameplayTags
 
         // ── Internal ─────────────────────────────────────────────────────────
 
-        private void NotifyChange(GameplayTag tag, ulong prev, ulong next)
+        private void NotifyChange(GameplayTag tag, ulong prev, ulong next, bool fireChanged = true)
         {
-            Changed?.Invoke(this);
+            if (fireChanged) Changed?.Invoke(this);
 
             if (_subscribers == null) return;
 
-            // Direct subscribers on this exact tag
+            // Direct subscribers on this exact tag.
             FireSubscribers(tag.Id, tag, prev, next, descendantNotification: false);
 
-            // Ancestor subscribers — only non-exact ones (opted into descendant events)
+            // Ancestor subscribers (non-exact ones that opted into descendant events). Snapshot the
+            // matching ids before invoking so a callback that subscribes/unsubscribes — mutating
+            // _subscribers — cannot corrupt this iteration. Allocates only when ancestors actually match.
+            List<ulong> ancestors = null;
             foreach (var kv in _subscribers)
-            {
-                if (kv.Key == tag.Id) continue;
-                if (GameplayTagRegistry.IsAncestor(kv.Key, tag.Id))
-                    FireSubscribers(kv.Key, tag, prev, next, descendantNotification: true);
-            }
+                if (kv.Key != tag.Id && GameplayTagRegistry.IsAncestor(kv.Key, tag.Id))
+                    (ancestors ??= new List<ulong>()).Add(kv.Key);
+
+            if (ancestors != null)
+                foreach (var id in ancestors)
+                    FireSubscribers(id, tag, prev, next, descendantNotification: true);
         }
 
         private void FireSubscribers(ulong subscribedId, GameplayTag changedTag, ulong prev, ulong next, bool descendantNotification)

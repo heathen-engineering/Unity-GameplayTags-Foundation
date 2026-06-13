@@ -19,13 +19,18 @@ namespace Heathen.GameplayTags
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
         private static void Init()
         {
+            // Reset for a clean session, including under "Enter Play Mode without Domain Reload" where the
+            // event delegate would otherwise retain stale subscribers from the previous session.
+            RegistryChanged = null;
             _runtime.Clear();
             _nameMap.Clear();
             foreach (var kv in _defaults)
                 _runtime[kv.Key] = new HashSet<ulong>(kv.Value);
 
-            // Load compiled .gptags assets from Resources — pre-built hierarchy, no string parsing.
-            var compiled = Resources.LoadAll<GameplayTagsCompiledData>("");
+            // Register every loaded compiled tag asset, not just those under a Resources folder.
+            // FindObjectsOfTypeAll also returns PlayerSettings-preloaded assets (how tag sets ship) and
+            // already-loaded scene assets; anything loading later self-registers via its own OnEnable.
+            var compiled = Resources.FindObjectsOfTypeAll<GameplayTagsCompiledData>();
             foreach (var asset in compiled)
                 if (asset != null && asset.AutoRegister)
                     MergeCompiledData(asset, _runtime);
@@ -36,6 +41,19 @@ namespace Heathen.GameplayTags
         public static void RegisterDefaults(GameplayTagsCompiledData data)
         {
             MergeCompiledData(data, _defaults);
+            MergeCompiledData(data, _runtime);
+            RegistryChanged?.Invoke();
+        }
+
+        /// <summary>
+        /// Merges a compiled tag asset into the live registry. Called automatically by
+        /// <see cref="GameplayTagsCompiledData"/> on load so a tag set registers wherever and whenever it
+        /// loads (including PlayerSettings-preloaded assets that load after <see cref="Init"/>).
+        /// </summary>
+        /// <param name="data">The compiled tag asset to register. <c>null</c> is ignored.</param>
+        public static void Register(GameplayTagsCompiledData data)
+        {
+            if (data?.Entries == null) return;
             MergeCompiledData(data, _runtime);
             RegistryChanged?.Invoke();
         }

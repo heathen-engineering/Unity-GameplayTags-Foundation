@@ -23,5 +23,16 @@ namespace Heathen.GameplayTags
         // Mirrors the "registered" flag in the .gptags source file.
         public bool              AutoRegister = true;
         public CompiledTagEntry[] Entries;
+
+        private void OnEnable()
+        {
+#if !UNITY_EDITOR
+            // Self-register whenever the asset loads at runtime — including PlayerSettings-preloaded assets
+            // that may load after the registry's subsystem-registration pass. Editor-time registration is
+            // handled by GameplayTagsCompiledDataRefresh.
+            if (AutoRegister)
+                GameplayTagRegistry.Register(this);
+#endif
+        }
     }
 }
