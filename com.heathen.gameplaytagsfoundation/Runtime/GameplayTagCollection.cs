@@ -257,9 +257,27 @@ namespace Heathen.GameplayTags
         {
             if (_map.ContainsKey(tag.Id)) return true;
             if (exactMatch) return false;
-            foreach (var desc in GameplayTagRegistry.GetDescendants(tag.Id))
-                if (_map.ContainsKey(desc)) return true;
+            // Iterate this (small) collection and range-test each entry against the tag's interval,
+            // rather than enumerating the registry's descendants of the tag.
+            foreach (var kv in _map)
+                if (GameplayTagRegistry.IsAncestor(tag.Id, kv.Key)) return true;
             return false;
+        }
+
+        /// <summary>
+        /// Returns the maximum value held by <paramref name="tag"/> itself or any of its registered
+        /// descendants present in this collection (the "non-exact" roll-up). Returns 0 when neither
+        /// the tag nor any descendant is present. Tests this collection's entries against the tag's
+        /// interval, so cost is proportional to the collection size, not the registry size.
+        /// </summary>
+        /// <param name="tag">The ancestor tag to roll up under.</param>
+        public ulong GetMaxValueUnder(GameplayTag tag)
+        {
+            ulong max = 0;
+            foreach (var kv in _map)
+                if (kv.Value > max && (kv.Key == tag.Id || GameplayTagRegistry.IsAncestor(tag.Id, kv.Key)))
+                    max = kv.Value;
+            return max;
         }
 
         /// <summary>

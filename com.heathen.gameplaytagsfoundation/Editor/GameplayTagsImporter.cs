@@ -23,9 +23,10 @@ namespace Heathen.GameplayTags.Editor
     // "registered": false (or absent) produces an empty non-registering asset.
     // Unity tracks the file either way so reimport triggers automatically on change.
     //
-    // The compiled asset stores the pre-built descendants map as flat arrays.
-    // GameplayTagRegistry.Init() merges them directly — no string parsing at runtime.
-    [ScriptedImporter(1, "gptags")]
+    // The compiled asset stores the tag forest as parent links (one entry per node, with its
+    // immediate parent id). GameplayTagRegistry merges these and computes interval encoding —
+    // no string parsing at runtime.
+    [ScriptedImporter(2, "gptags")]
     public class GameplayTagsImporter : ScriptedImporter
     {
         public override void OnImportAsset(AssetImportContext ctx)
@@ -64,20 +65,22 @@ namespace Heathen.GameplayTags.Editor
                 GameplayTagRegistry.RegisterDefaults(compiled);
         }
 
-        // Mirrors O3DE's BuildDescendantsMap: each prefix node maps to all deeper nodes.
+        // Builds one entry per node (every dot-path prefix), each carrying its immediate parent id.
+        // The registry derives interval encoding from these parent links post-merge.
         private static CompiledTagEntry[] BuildEntries(string[] tags)
         {
-            var hierarchy = new Dictionary<ulong, HashSet<ulong>>();
-            var nameMap   = new Dictionary<ulong, string>();
+            // id -> (name, parentId). Synthesises every prefix node; de-dups by id (a node reached
+            // via multiple tags keeps one entry with an identical parent by construction).
+            var nodes = new Dictionary<ulong, (string name, ulong parent)>();
 
             foreach (var tag in tags)
             {
                 if (string.IsNullOrWhiteSpace(tag)) continue;
                 var trimmed = tag.Trim();
 
-                var parts  = trimmed.Split('.');
-                var sb     = new StringBuilder();
-                var hashes = new ulong[parts.Length];
+                var parts = trimmed.Split('.');
+                var sb    = new StringBuilder();
+                ulong parentHash = 0; // root has no parent
 
                 for (int i = 0; i < parts.Length; i++)
                 {
@@ -85,28 +88,23 @@ namespace Heathen.GameplayTags.Editor
                     sb.Append(parts[i]);
                     var path = sb.ToString();
                     var hash = GameplayTagRegistry.Hash(path);
-                    hashes[i]     = hash;
-                    nameMap[hash] = path;
-                    if (!hierarchy.ContainsKey(hash))
-                        hierarchy[hash] = new HashSet<ulong>();
-                }
 
-                for (int ancestor = 0; ancestor < parts.Length - 1; ancestor++)
-                    for (int descendant = ancestor + 1; descendant < parts.Length; descendant++)
-                        hierarchy[hashes[ancestor]].Add(hashes[descendant]);
+                    if (!nodes.ContainsKey(hash))
+                        nodes[hash] = (path, parentHash);
+
+                    parentHash = hash; // becomes the parent of the next, deeper segment
+                }
             }
 
-            var entries = new CompiledTagEntry[hierarchy.Count];
+            var entries = new CompiledTagEntry[nodes.Count];
             int idx = 0;
-            foreach (var kv in hierarchy)
+            foreach (var kv in nodes)
             {
-                var children = new ulong[kv.Value.Count];
-                kv.Value.CopyTo(children);
                 entries[idx++] = new CompiledTagEntry
                 {
-                    Id          = kv.Key,
-                    Name        = nameMap.TryGetValue(kv.Key, out var n) ? n : string.Empty,
-                    Descendants = children,
+                    Id       = kv.Key,
+                    Name     = kv.Value.name,
+                    ParentId = kv.Value.parent,
                 };
             }
             return entries;
@@ -167,10 +165,8 @@ namespace Heathen.GameplayTags.Editor
             EditorGUI.BeginDisabledGroup(true);
             foreach (var entry in data.Entries)
             {
-                EditorGUILayout.LabelField(
-                    entry.Name,
-                    $"{entry.Descendants?.Length ?? 0} descendants",
-                    EditorStyles.miniLabel);
+                var parent = entry.ParentId == 0 ? "(root)" : GameplayTagRegistry.GetName(entry.ParentId) ?? entry.ParentId.ToString("X16");
+                EditorGUILayout.LabelField(entry.Name, $"parent: {parent}", EditorStyles.miniLabel);
             }
             EditorGUI.EndDisabledGroup();
         }

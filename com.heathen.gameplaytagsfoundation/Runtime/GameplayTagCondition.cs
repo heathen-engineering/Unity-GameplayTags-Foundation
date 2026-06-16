@@ -124,14 +124,10 @@ namespace Heathen.GameplayTags
             if (ExactMatch)
                 return collection.GetValue(Tag);
 
-            // Non-exact: return the max value across the tag and all descendants
-            ulong max = collection.GetValue(Tag);
-            foreach (var descId in GameplayTagRegistry.GetDescendants(Tag.Id))
-            {
-                var v = collection.GetValue(new GameplayTag(descId));
-                if (v > max) max = v;
-            }
-            return max;
+            // Non-exact: max value across the tag and all descendants present in the collection.
+            // Resolved by interval range tests over the collection's entries (see GetMaxValueUnder),
+            // not by enumerating the registry's descendants.
+            return collection.GetMaxValueUnder(Tag);
         }
 
         /// <summary>

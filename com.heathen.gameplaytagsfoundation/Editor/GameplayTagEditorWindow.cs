@@ -39,6 +39,14 @@ namespace Heathen.GameplayTags.Editor
                     "Use dot-separated alphanumeric/underscore segments — e.g. Shop.Bakery.Back",
                     MessageType.Warning);
 
+            // Debug: show the interval encoding when the path resolves to a registered tag.
+            if (isValid && GameplayTagRegistry.TryGetInterval(
+                    GameplayTagRegistry.Hash(_editBuffer.Trim()), out var interval))
+                EditorGUILayout.LabelField(
+                    "Interval",
+                    $"Lft {interval.Lft}   Rgt {interval.Rgt}   Depth {interval.Depth}",
+                    EditorStyles.miniLabel);
+
             GUILayout.FlexibleSpace();
 
             using (new EditorGUILayout.HorizontalScope())

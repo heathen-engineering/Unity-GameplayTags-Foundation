@@ -42,7 +42,8 @@ The following features are included:
 - **Collections** — Per-entity tag containers with stack-count semantics (`AddTag`, `RemoveTag`, `Apply` arithmetic). Serialize cleanly via `ISerializationCallbackReceiver`.
 - **Conditions** — `GameplayTagCondition` with full numeric comparison operators (`Exists`, `Equal`, `Less`, `Greater`, etc.) and AND/OR/XOR logic chains via `EvaluateAll`.
 - **Operations** — `GameplayTagOperation` bundles a tag, arithmetic, value, and optional condition list so operations can be stored as data and evaluated at runtime.
-- **Burst support** — `GetSnapshot(Allocator)` and `GetNativeDescendantsMap(Allocator)` return caller-owned `NativeHashMap` / `NativeDescendantsMap` structs safe to pass into Burst-compiled jobs.
+- **Interval (nested-set) encoding** — hierarchy is stored as parent links and compiled to per-tag `Lft`/`Rgt` ranges, so `IsAncestor` is an O(1) range test (`A.Lft < X.Lft <= A.Rgt`) and memory is O(N) instead of a transitive closure. Runtime tag registration triggers a rebuild and bumps `IntervalGeneration`.
+- **Burst support** — `GetSnapshot(Allocator)` and `GetNativeIntervalMap(Allocator)` return caller-owned `NativeHashMap` / `NativeIntervalMap` structs safe to pass into Burst-compiled jobs. (`GetNativeDescendantsMap` is retained but obsolete; prefer interval range tests.)
 - **Project Settings panel** — Manage all tag databases from `Project Settings > Gameplay Tags`. Unified tree view with inline rename (hierarchical), delete with confirmation, filter, and drag-drop pinning.
 
 ---
@@ -150,12 +151,13 @@ using Unity.Collections;
 // Caller-owned snapshot for read-only job access
 NativeHashMap<ulong, ulong> snapshot = active.GetSnapshot(Allocator.TempJob);
 
-// Caller-owned CSR descendants map
-NativeDescendantsMap descMap = GameplayTagRegistry.GetNativeDescendantsMap(Allocator.TempJob);
+// Caller-owned interval map for Burst hierarchy tests (range comparisons)
+NativeIntervalMap intervals = GameplayTagRegistry.GetNativeIntervalMap(Allocator.TempJob);
+// intervals.IsAncestor(ancestorId, candidateId) inside a job
 
 // ... schedule jobs, then:
 snapshot.Dispose();
-descMap.Dispose();
+intervals.Dispose();
 ```
 
 -----
@@ -191,7 +193,10 @@ descMap.Dispose();
 | `GetName(id)` | Reverse-lookup a name from an id |
 | `ValidateTag(dotPath)` | Validate format without registering |
 | `GetRegisteredIds(allocator)` | Burst-safe `NativeHashMap<ulong, bool>`; caller disposes |
-| `GetNativeDescendantsMap(allocator)` | Burst-safe CSR descendants map; caller disposes |
+| `GetNativeIntervalMap(allocator)` | Burst-safe interval map for range-based hierarchy tests; caller disposes |
+| `TryGetInterval(id, out interval)` | The `Lft`/`Rgt`/`Depth` interval for a registered tag |
+| `IntervalGeneration` | Bumps on every interval rebuild; use to detect cached-data staleness |
+| `GetNativeDescendantsMap(allocator)` | Obsolete; derived CSR descendants map. Prefer `GetNativeIntervalMap` |
 
 ### `GameplayTagCollection`
 
