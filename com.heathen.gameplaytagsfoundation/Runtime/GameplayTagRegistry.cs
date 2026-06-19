@@ -66,7 +66,20 @@ namespace Heathen.GameplayTags
         public static void RegisterDefaults(GameplayTagsCompiledData data)
         {
             if (data?.Entries == null) return;
-            foreach (var e in data.Entries)
+            RegisterBaked(data.Entries);
+        }
+
+        /// <summary>
+        /// Register baked tag entries (Id / ParentId / Name) directly from generated C# — the SO-free
+        /// registration path the GameplayTags code generator targets (see GameplayTags-CodeGen-Spec). Baked
+        /// tags form the default base (restored on an enter-play-mode-without-domain-reload reset). Ids are
+        /// the xxHash3 of the dot-path (<see cref="Hash"/>), baked by the generator; this method does no
+        /// hashing or parsing — pure data ingest + a single interval rebuild over the merged forest.
+        /// </summary>
+        public static void RegisterBaked(CompiledTagEntry[] entries)
+        {
+            if (entries == null) return;
+            foreach (var e in entries)
             {
                 _defaultParent[e.Id] = e.ParentId;
                 _parent[e.Id]        = e.ParentId;
