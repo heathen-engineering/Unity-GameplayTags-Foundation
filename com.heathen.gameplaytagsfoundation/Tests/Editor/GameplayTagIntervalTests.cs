@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using NUnit.Framework;
 using Unity.Collections;
-using UnityEngine;
 
 namespace Heathen.GameplayTags.Tests
 {
@@ -108,28 +107,20 @@ namespace Heathen.GameplayTags.Tests
         {
             // Two assets: one defines the upper path, the other a deeper node and a separate root.
             var r = FreshRoot();
-            var upper = MakeAsset(
+            var upper = MakeEntries(
                 ($"{r}.A", 0),
                 ($"{r}.A.B", Hash($"{r}.A")));
-            var lower = MakeAsset(
+            var lower = MakeEntries(
                 ($"{r}.A.B.C", Hash($"{r}.A.B")),
                 ($"{r}.X", 0));
 
-            try
-            {
-                GameplayTagRegistry.Register(upper);
-                GameplayTagRegistry.Register(lower);
+            GameplayTagRegistry.RegisterBaked(upper);
+            GameplayTagRegistry.RegisterBaked(lower);
 
-                Assert.IsTrue(GameplayTag.FromName($"{r}.A").IsParentOf(GameplayTag.FromName($"{r}.A.B.C")),
-                    "ancestry resolves across asset boundaries");
-                Assert.IsFalse(GameplayTag.FromName($"{r}.A").IsParentOf(GameplayTag.FromName($"{r}.X")),
-                    "separate root is not under A");
-            }
-            finally
-            {
-                UnityEngine.Object.DestroyImmediate(upper);
-                UnityEngine.Object.DestroyImmediate(lower);
-            }
+            Assert.IsTrue(GameplayTag.FromName($"{r}.A").IsParentOf(GameplayTag.FromName($"{r}.A.B.C")),
+                "ancestry resolves across set boundaries");
+            Assert.IsFalse(GameplayTag.FromName($"{r}.A").IsParentOf(GameplayTag.FromName($"{r}.X")),
+                "separate root is not under A");
         }
 
         [Test]
@@ -139,18 +130,11 @@ namespace Heathen.GameplayTags.Tests
             var childId     = GameplayTagRegistry.Hash(orphanChild);
             const ulong danglingParent = 123456789UL; // never registered
 
-            var data = MakeAsset((orphanChild, danglingParent));
-            try
-            {
-                Assert.DoesNotThrow(() => GameplayTagRegistry.Register(data));
-                Assert.IsTrue(GameplayTagRegistry.IsRegistered(childId));
-                Assert.IsFalse(GameplayTagRegistry.IsAncestor(danglingParent, childId),
-                    "an unregistered dangling parent is not an ancestor");
-            }
-            finally
-            {
-                UnityEngine.Object.DestroyImmediate(data);
-            }
+            var data = MakeEntries((orphanChild, danglingParent));
+            Assert.DoesNotThrow(() => GameplayTagRegistry.RegisterBaked(data));
+            Assert.IsTrue(GameplayTagRegistry.IsRegistered(childId));
+            Assert.IsFalse(GameplayTagRegistry.IsAncestor(danglingParent, childId),
+                "an unregistered dangling parent is not an ancestor");
         }
 
         [Test]
@@ -190,10 +174,9 @@ namespace Heathen.GameplayTags.Tests
 
         private static ulong Hash(string path) => GameplayTagRegistry.Hash(path);
 
-        private static GameplayTagsCompiledData MakeAsset(params (string path, ulong parentId)[] entries)
+        // Build a baked-entry set the way the .gptags code generator would (SO-free), for RegisterBaked.
+        private static CompiledTagEntry[] MakeEntries(params (string path, ulong parentId)[] entries)
         {
-            var data = ScriptableObject.CreateInstance<GameplayTagsCompiledData>();
-            data.AutoRegister = true;
             var arr = new CompiledTagEntry[entries.Length];
             for (int i = 0; i < entries.Length; i++)
                 arr[i] = new CompiledTagEntry
@@ -202,8 +185,7 @@ namespace Heathen.GameplayTags.Tests
                     Name = entries[i].path,
                     ParentId = entries[i].parentId,
                 };
-            data.Entries = arr;
-            return data;
+            return arr;
         }
     }
 }

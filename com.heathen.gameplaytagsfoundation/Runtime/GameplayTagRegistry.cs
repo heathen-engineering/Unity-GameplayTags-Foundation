@@ -47,26 +47,14 @@ namespace Heathen.GameplayTags
             _interval.Clear();
             IntervalGeneration = 0;
 
-            // Restore the baked default base.
+            // Restore the baked default base (set by RegisterBaked — the SO-free registration path). The
+            // actual tags are (re)registered each session by the generated Register() at runtime
+            // ([RuntimeInitializeOnLoadMethod], baked literals) and by GameplayTagsEditorRegistrar in-editor.
             foreach (var kv in _defaultParent) _parent[kv.Key] = kv.Value;
             foreach (var kv in _defaultNames)  _nameMap[kv.Key] = kv.Value;
 
-            // Register every loaded compiled tag asset, not just those under a Resources folder.
-            // FindObjectsOfTypeAll also returns PlayerSettings-preloaded assets (how tag sets ship) and
-            // already-loaded scene assets; anything loading later self-registers via its own OnEnable.
-            var compiled = Resources.FindObjectsOfTypeAll<GameplayTagsCompiledData>();
-            foreach (var asset in compiled)
-                if (asset != null && asset.AutoRegister)
-                    MergeCompiledData(asset, _parent);
-
             RebuildIntervals();
             RegistryChanged?.Invoke();
-        }
-
-        public static void RegisterDefaults(GameplayTagsCompiledData data)
-        {
-            if (data?.Entries == null) return;
-            RegisterBaked(data.Entries);
         }
 
         /// <summary>
@@ -93,20 +81,6 @@ namespace Heathen.GameplayTags
             RegistryChanged?.Invoke();
         }
 
-        /// <summary>
-        /// Merges a compiled tag asset into the live registry. Called automatically by
-        /// <see cref="GameplayTagsCompiledData"/> on load so a tag set registers wherever and whenever it
-        /// loads (including PlayerSettings-preloaded assets that load after <see cref="Init"/>).
-        /// </summary>
-        /// <param name="data">The compiled tag asset to register. <c>null</c> is ignored.</param>
-        public static void Register(GameplayTagsCompiledData data)
-        {
-            if (data?.Entries == null) return;
-            MergeCompiledData(data, _parent);
-            RebuildIntervals();
-            RegistryChanged?.Invoke();
-        }
-
         // Register a single tag path at runtime — for UGC/mod tags not baked into a .gptags asset.
         // Forces an interval rebuild (the accepted, rare cost of runtime registration).
         public static void Register(string dotPath)
@@ -115,18 +89,6 @@ namespace Heathen.GameplayTags
             RegisterHierarchy(dotPath, _parent);
             RebuildIntervals();
             RegistryChanged?.Invoke();
-        }
-
-        private static void MergeCompiledData(GameplayTagsCompiledData data, Dictionary<ulong, ulong> targetParent)
-        {
-            if (data?.Entries == null) return;
-            foreach (var entry in data.Entries)
-            {
-                // Parent links are identical across assets by construction, so a plain assign de-dups.
-                targetParent[entry.Id] = entry.ParentId;
-                if (!string.IsNullOrEmpty(entry.Name))
-                    _nameMap[entry.Id] = entry.Name;
-            }
         }
 
         // Synthesises every prefix node of a dot-path and records its immediate parent link.

@@ -39,6 +39,13 @@ namespace Heathen.GameplayTags
         public GameplayTag(ulong id) { _id = id; }
 
         /// <summary>
+        /// Creates a <see cref="GameplayTag"/> from a pre-computed 64-bit Id. This is what generated tag
+        /// code uses (e.g. <c>Tags.Effects_Buff_Strength = GameplayTag.FromId(0x…u)</c>): the Id is the
+        /// xxHash3 of the path, baked at generation time, so no hashing happens at runtime.
+        /// </summary>
+        public static GameplayTag FromId(ulong id) => new GameplayTag(id);
+
+        /// <summary>
         /// Creates a <see cref="GameplayTag"/> from a dot-separated path string by hashing it
         /// with the same algorithm used by the registry. The tag does not need to be registered
         /// for this to succeed, but runtime queries will only resolve names for registered tags.

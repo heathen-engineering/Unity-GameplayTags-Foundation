@@ -45,6 +45,7 @@ namespace Heathen.GameplayTags.Editor
         private List<TagEntry>    _treeCache;
         private bool              _dataDirty  = true;
         private string            _lastFilter;
+        private int               _staleCount; // registered sources whose generated code is out of date
 
         private void InvalidateAll()
         {
@@ -60,12 +61,8 @@ namespace Heathen.GameplayTags.Editor
             _sourcesCache = new List<SourceEntry>();
             _allTagsCache = new HashSet<string>();
 
-            var guids = AssetDatabase.FindAssets("t:GameplayTagsCompiledData");
-            foreach (var guid in guids)
+            foreach (var path in GameplayTagsSources.FindAll())
             {
-                var path = AssetDatabase.GUIDToAssetPath(guid);
-                if (!path.EndsWith(".gptags", StringComparison.OrdinalIgnoreCase)) continue;
-
                 var (tags, registered) = ReadGpTagsSource(path);
                 _sourcesCache.Add(new SourceEntry
                 {
@@ -77,6 +74,12 @@ namespace Heathen.GameplayTags.Editor
                 foreach (var t in tags)
                     if (!string.IsNullOrWhiteSpace(t)) _allTagsCache.Add(t.Trim());
             }
+
+            // Cache how many registered sources have out-of-date generated code (drives the Generate
+            // button's nudge). Computed here, not per-repaint, since it reads files.
+            _staleCount = 0;
+            foreach (var s in _sourcesCache)
+                if (s.Registered && GameplayTagsCodeGenerator.IsStale(s.Path)) _staleCount++;
 
             _dataDirty = false;
             _treeCache = null;
@@ -143,6 +146,15 @@ namespace Heathen.GameplayTags.Editor
             using (new EditorGUILayout.HorizontalScope(EditorStyles.toolbar, GUILayout.ExpandWidth(true)))
             {
                 EditorGUILayout.LabelField("Gameplay Tags", EditorStyles.whiteLabel, GUILayout.Width(110));
+
+                // Staleness nudge: how far the generated tag code is behind the .gptags sources.
+                EnsureData();
+                if (_staleCount > 0)
+                {
+                    var warn = new GUIStyle(EditorStyles.miniLabel) { normal = { textColor = new Color(0.95f, 0.7f, 0.2f) } };
+                    EditorGUILayout.LabelField($"⚠ {_staleCount} set(s) need regenerating", warn, GUILayout.Width(190));
+                }
+
                 GUILayout.FlexibleSpace();
                 if (GUILayout.Button("New", EditorStyles.toolbarButton, GUILayout.Width(38)))
                     CreateGpTagsFile();
@@ -151,6 +163,16 @@ namespace Heathen.GameplayTags.Editor
                     InvalidateAll();
                     GameplayTagsDataEditor.ForceRefresh();
                 }
+                // Generate the baked tag code (accessors + Register). Manual + on-build only (never auto —
+                // would thrash recompiles). Emphasised when something is stale.
+                var prev = GUI.backgroundColor;
+                if (_staleCount > 0) GUI.backgroundColor = new Color(0.95f, 0.7f, 0.2f);
+                if (GUILayout.Button("Generate Code", EditorStyles.toolbarButton, GUILayout.Width(100)))
+                {
+                    GameplayTagsCodeGenerator.GenerateAll();
+                    InvalidateAll();
+                }
+                GUI.backgroundColor = prev;
             }
         }
 

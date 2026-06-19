@@ -3,6 +3,7 @@
     "rootNamespace": "Heathen.GameplayTags.Tests",
     "references": [
         "Heathen.GameplayTags",
+        "Heathen.GameplayTags.Editor",
         "Unity.Collections",
         "UnityEngine.TestRunner",
         "UnityEditor.TestRunner"

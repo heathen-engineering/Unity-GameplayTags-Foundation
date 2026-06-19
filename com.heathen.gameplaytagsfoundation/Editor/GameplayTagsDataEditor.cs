@@ -2,14 +2,10 @@ using UnityEditor;
 
 namespace Heathen.GameplayTags.Editor
 {
-    [InitializeOnLoad]
+    // The settings panel's "Refresh" entry point. Domain-reload auto-refresh is owned by
+    // GameplayTagsEditorRegistrar ([InitializeOnLoad]); this just forwards manual refreshes.
     public static class GameplayTagsDataEditor
     {
-        static GameplayTagsDataEditor()
-        {
-            EditorApplication.delayCall += ForceRefresh;
-        }
-
-        public static void ForceRefresh() => GameplayTagsCompiledDataRefresh.Refresh();
+        public static void ForceRefresh() => GameplayTagsEditorRegistrar.Refresh();
     }
 }

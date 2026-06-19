@@ -1,45 +1,28 @@
-using System.Linq;
-using UnityEditor;
 using UnityEditor.Build;
 using UnityEditor.Build.Reporting;
-using Object = UnityEngine.Object;
 
 namespace Heathen.GameplayTags.Editor
 {
     /// <summary>
-    /// Keeps every auto-registering compiled tag asset in PlayerSettings → Preloaded Assets so the tag
-    /// hierarchy is baked into player builds and registers itself at startup, regardless of where the
-    /// <c>.gptags</c> files live in the project. Runs before each build and is also invoked on editor load.
+    /// Guards player builds: the generated tag code (accessors + baked <c>Register()</c>) is compiled INTO
+    /// the player and registers the tag hierarchy at startup, so it must be current before the build's
+    /// compilation. There is no ScriptableObject to preload any more — the JSON doesn't ship, the baked
+    /// code is the runtime. See GameplayTags-CodeGen-Spec.
     /// </summary>
-    public static class GameplayTagsPreload
-    {
-        /// <summary>
-        /// Ensures the preloaded-assets list contains exactly the current set of auto-registering compiled
-        /// tag assets (plus whatever non-tag assets were already there), writing back only when it changes.
-        /// </summary>
-        public static void EnsureTagsPreloaded()
-        {
-            var auto = AssetDatabase.FindAssets("t:GameplayTagsCompiledData")
-                .Select(g => AssetDatabase.LoadAssetAtPath<GameplayTagsCompiledData>(AssetDatabase.GUIDToAssetPath(g)))
-                .Where(a => a != null && a.AutoRegister)
-                .Cast<Object>()
-                .ToList();
-
-            var current = PlayerSettings.GetPreloadedAssets().ToList();
-            // Keep all non-tag entries (and drop null holes Unity leaves when assets are deleted), then
-            // append the current auto-register tag set.
-            var desired = current.Where(a => a != null && !(a is GameplayTagsCompiledData)).ToList();
-            desired.AddRange(auto);
-
-            if (!current.SequenceEqual(desired))
-                PlayerSettings.SetPreloadedAssets(desired.ToArray());
-        }
-    }
-
     internal sealed class GameplayTagsBuildProcessor : IPreprocessBuildWithReport
     {
         public int callbackOrder => 0;
 
-        public void OnPreprocessBuild(BuildReport report) => GameplayTagsPreload.EnsureTagsPreloaded();
+        public void OnPreprocessBuild(BuildReport report)
+        {
+            // Regenerating here would be too late to recompile — fail loudly so the dev regenerates and
+            // rebuilds, guaranteeing a build never ships stale tag accessors / baked registration.
+            int stale = GameplayTagsCodeGenerator.CountStaleRegistered();
+            if (stale > 0)
+                throw new BuildFailedException(
+                    $"[GameplayTags] {stale} tag set(s) have out-of-date generated code. " +
+                    "Run Tools ▸ Heathen ▸ GameplayTags ▸ Generate Tag Code (or the Generate button in " +
+                    "Project Settings ▸ Gameplay Tags), then rebuild.");
+        }
     }
 }
