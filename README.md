@@ -1,4 +1,4 @@
-# Foundation for Gameplay Tags
+# GameplayTags Foundation
 
 ![License](https://img.shields.io/badge/License-Apache_2.0-blue?style=flat-square)
 ![Maintained](https://img.shields.io/badge/Maintained%3F-yes-green?style=flat-square)
@@ -26,7 +26,7 @@ Learn more or explore other ways to support @ [heathen.group/kb](https://heathen
 
 ## What it does
 
-Foundation for Gameplay Tags gives you a structured, hierarchy-aware tag system built on three core types:
+GameplayTags Foundation gives you a structured, hierarchy-aware tag system built on three core types:
 
 | Type | Purpose |
 |------|---------|
