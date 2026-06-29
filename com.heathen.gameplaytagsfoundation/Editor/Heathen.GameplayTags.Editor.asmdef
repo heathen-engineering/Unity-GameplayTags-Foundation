@@ -2,7 +2,9 @@
     "name": "Heathen.GameplayTags.Editor",
     "rootNamespace": "",
     "references": [
-        "Heathen.GameplayTags"
+        "Heathen.GameplayTags",
+        "Heathen.GameFramework",
+        "Heathen.GameFramework.Editor"
     ],
     "includePlatforms": [
         "Editor"

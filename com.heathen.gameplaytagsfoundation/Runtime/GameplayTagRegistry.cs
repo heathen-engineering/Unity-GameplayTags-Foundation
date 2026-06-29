@@ -36,8 +36,14 @@ namespace Heathen.GameplayTags
 
         public static event Action RegistryChanged;
 
-        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
-        private static void Init()
+        /// <summary>
+        /// Resets the registry to a clean session state and restores the baked default base. Owned by
+        /// <c>GameplayTagsSubsystem.Initialize</c> (a Global framework subsystem booted at
+        /// <see cref="RuntimeInitializeLoadType.SubsystemRegistration"/>), so the lifecycle runs through the
+        /// framework rather than an ad-hoc bootstrap. Runs before the generated <c>Register()</c>
+        /// (<see cref="RuntimeInitializeLoadType.BeforeSceneLoad"/>), which re-applies the baked tags on top.
+        /// </summary>
+        public static void ResetForSession()
         {
             // Reset for a clean session, including under "Enter Play Mode without Domain Reload" where the
             // event delegate would otherwise retain stale subscribers from the previous session.

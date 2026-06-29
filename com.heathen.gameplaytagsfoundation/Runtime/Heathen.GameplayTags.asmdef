@@ -2,6 +2,7 @@
     "name": "Heathen.GameplayTags",
     "rootNamespace": "",
     "references": [
+        "Heathen.GameFramework",
         "Unity.Collections",
         "Unity.Mathematics"
     ],

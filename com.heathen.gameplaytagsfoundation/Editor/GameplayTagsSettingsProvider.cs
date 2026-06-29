@@ -1,51 +1,56 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
-using Newtonsoft.Json.Linq;
+using System.Text;
 using UnityEditor;
 using UnityEngine;
-using UnityEngine.UIElements;
+using Heathen.Editor; // SettingsMetadata
 
 namespace Heathen.GameplayTags.Editor
 {
+    /// <summary>
+    /// Project Settings ▸ Gameplay Tags. Edits the project's standalone tag vocabulary
+    /// (<see cref="GameplayTagSettings"/> in <c>ProjectSettings</c>) as two groups: <b>Registered</b>
+    /// (hierarchy-aware — registered live and baked to runtime) and <b>Unregistered</b> (authored drafts that
+    /// are stored but not registered or baked). Tool-owned tags (Ogham stories, HATE worlds, …) are not shown
+    /// here — each tool owns its own tags. The <c>.gptags</c> format is a runtime mod / UGC source only.
+    /// </summary>
     public class GameplayTagsSettingsProvider : SettingsProvider
     {
         // ── State ─────────────────────────────────────────────────────────────
 
-        private string  _activeSourcePath;
-        private string  _filter    = "";
-        private string  _newTag    = "";
-        private Vector2 _srcScroll;
-        private Vector2 _tagScroll;
+        private GameplayTagSettings _settings;
+        private string  _filter   = "";
+        private string  _newTag   = "";
+        private bool    _newTagRegistered = true;
+        private Vector2 _scroll;
 
         private readonly Dictionary<string, bool> _expanded = new();
 
         // ── Data cache ────────────────────────────────────────────────────────
-
-        private struct SourceEntry
-        {
-            public string Path;
-            public string DisplayName;
-            public int    TagCount;
-            public bool   Registered;
-        }
 
         private struct TagEntry
         {
             public string FullPath;
             public string Segment;
             public int    Depth;
-            public bool   IsVirtual;
+            public bool   IsVirtual;    // an implied parent, not an explicitly authored tag
+            public bool   Registered;   // explicit tag's group (meaningless for virtual)
             public bool   HasChildren;
         }
 
-        private List<SourceEntry> _sourcesCache;
-        private HashSet<string>   _allTagsCache;
-        private List<TagEntry>    _treeCache;
-        private bool              _dataDirty  = true;
-        private string            _lastFilter;
-        private int               _staleCount; // registered sources whose generated code is out of date
+        private HashSet<string> _registered;
+        private HashSet<string> _unregistered;
+        private List<TagEntry>  _treeCache;
+        private string          _lastFilter;
+        private bool            _dataDirty = true;
+        private bool            _stale;
+
+        // Read-only provenance view: tags contributed by other tools (via ITagSource), plus a catch-all of any
+        // live-registry tags not attributed to the project store or a source. Computed in EnsureData (the ITagSource
+        // getters scan files), not per repaint.
+        private List<(string name, List<string> tags, bool registered)> _contributed;
+        private List<string> _unattributed;
 
         private void InvalidateAll()
         {
@@ -56,33 +61,50 @@ namespace Heathen.GameplayTags.Editor
 
         private void EnsureData()
         {
-            if (!_dataDirty && _sourcesCache != null) return;
+            if (!_dataDirty && _settings != null) return;
 
-            _sourcesCache = new List<SourceEntry>();
-            _allTagsCache = new HashSet<string>();
+            _settings     = GameplayTagSettings.GetOrCreate();
+            _registered   = new HashSet<string>(_settings.RegisteredTags   ?? new List<string>());
+            _unregistered = new HashSet<string>(_settings.UnregisteredTags ?? new List<string>());
+            _stale        = GameplayTagsCodeGenerator.IsStale();
+            BuildContributed();
+            _dataDirty    = false;
+            _treeCache    = null;
+        }
 
-            foreach (var path in GameplayTagsSources.FindAll())
+        // Aggregate the provenance view once per refresh: each ITagSource's tags, plus any registry tags not
+        // attributed to the project store or a source (so nothing in the system is invisible).
+        private void BuildContributed()
+        {
+            _contributed  = new List<(string, List<string>, bool)>();
+            var claimed   = new HashSet<string>();
+            foreach (var t in _registered)   AddWithParents(claimed, t);
+            foreach (var t in _unregistered) AddWithParents(claimed, t);
+
+            foreach (var src in SettingsMetadata.All<ITagSource>().OrderBy(s => s.SourceName, StringComparer.Ordinal))
             {
-                var (tags, registered) = ReadGpTagsSource(path);
-                _sourcesCache.Add(new SourceEntry
-                {
-                    Path        = path,
-                    DisplayName = System.IO.Path.GetFileNameWithoutExtension(path),
-                    TagCount    = tags.Count,
-                    Registered  = registered,
-                });
-                foreach (var t in tags)
-                    if (!string.IsNullOrWhiteSpace(t)) _allTagsCache.Add(t.Trim());
+                var tags = (src.Tags ?? Enumerable.Empty<string>())
+                    .Where(t => !string.IsNullOrWhiteSpace(t)).Select(t => t.Trim())
+                    .Distinct().OrderBy(t => t, StringComparer.Ordinal).ToList();
+                foreach (var t in tags) AddWithParents(claimed, t);
+                if (tags.Count > 0) _contributed.Add((src.SourceName, tags, src.Registered));
             }
 
-            // Cache how many registered sources have out-of-date generated code (drives the Generate
-            // button's nudge). Computed here, not per-repaint, since it reads files.
-            _staleCount = 0;
-            foreach (var s in _sourcesCache)
-                if (s.Registered && GameplayTagsCodeGenerator.IsStale(s.Path)) _staleCount++;
+            _unattributed = GameplayTagRegistry.GetAllNames()
+                .Where(n => !claimed.Contains(n))
+                .OrderBy(n => n, StringComparer.Ordinal).ToList();
+        }
 
-            _dataDirty = false;
-            _treeCache = null;
+        private static void AddWithParents(HashSet<string> set, string tag)
+        {
+            var parts = tag.Split('.');
+            var sb = new StringBuilder();
+            for (int i = 0; i < parts.Length; i++)
+            {
+                if (i > 0) sb.Append('.');
+                sb.Append(parts[i]);
+                set.Add(sb.ToString());
+            }
         }
 
         private List<TagEntry> GetTree()
@@ -102,12 +124,11 @@ namespace Heathen.GameplayTags.Editor
             fontStyle = FontStyle.Italic,
             normal = { textColor = new Color(0.5f, 0.5f, 0.5f) }
         };
-        private static readonly Color GreenTick = new Color(0.3f, 0.85f, 0.4f);
 
         // ── SettingsProvider plumbing ─────────────────────────────────────────
 
         public GameplayTagsSettingsProvider()
-            : base("Project/Gameplay Tags", SettingsScope.Project) { }
+            : base("Project/Subsystems/Gameplay Tags", SettingsScope.Project) { }
 
         [SettingsProvider]
         public static SettingsProvider Create() => new GameplayTagsSettingsProvider
@@ -115,10 +136,10 @@ namespace Heathen.GameplayTags.Editor
             keywords = new HashSet<string>(new[] { "gameplay", "tags", "heathen" }),
         };
 
-        public override void OnActivate(string searchContext, VisualElement rootElement)
+        public override void OnActivate(string searchContext, UnityEngine.UIElements.VisualElement rootElement)
         {
             GameplayTagRegistry.RegistryChanged += OnRegistryChanged;
-            GameplayTagsDataEditor.ForceRefresh();
+            InvalidateAll();
         }
 
         public override void OnDeactivate()
@@ -134,39 +155,40 @@ namespace Heathen.GameplayTags.Editor
         {
             DrawToolbar();
             EditorGUILayout.Space(4);
-            DrawSourcesSection();
-            EditorGUILayout.Space(6);
-            DrawTagSection();
+            DrawAddRow();
+            EditorGUILayout.Space(2);
+            DrawFilter();
+            _scroll = EditorGUILayout.BeginScrollView(_scroll);
+            DrawTagTree();
+            DrawContributedSources();
+            EditorGUILayout.EndScrollView();
         }
 
         // ── Toolbar ──────────────────────────────────────────────────────────
 
         private void DrawToolbar()
         {
+            EnsureData();
             using (new EditorGUILayout.HorizontalScope(EditorStyles.toolbar, GUILayout.ExpandWidth(true)))
             {
                 EditorGUILayout.LabelField("Gameplay Tags", EditorStyles.whiteLabel, GUILayout.Width(110));
 
-                // Staleness nudge: how far the generated tag code is behind the .gptags sources.
-                EnsureData();
-                if (_staleCount > 0)
+                if (_stale)
                 {
                     var warn = new GUIStyle(EditorStyles.miniLabel) { normal = { textColor = new Color(0.95f, 0.7f, 0.2f) } };
-                    EditorGUILayout.LabelField($"⚠ {_staleCount} set(s) need regenerating", warn, GUILayout.Width(190));
+                    EditorGUILayout.LabelField("⚠ tag code needs regenerating", warn, GUILayout.Width(190));
                 }
 
                 GUILayout.FlexibleSpace();
-                if (GUILayout.Button("New", EditorStyles.toolbarButton, GUILayout.Width(38)))
-                    CreateGpTagsFile();
                 if (GUILayout.Button("Refresh", EditorStyles.toolbarButton, GUILayout.Width(54)))
                 {
+                    GameplayTagsEditorRegistrar.Refresh();
                     InvalidateAll();
-                    GameplayTagsDataEditor.ForceRefresh();
                 }
-                // Generate the baked tag code (accessors + Register). Manual + on-build only (never auto —
-                // would thrash recompiles). Emphasised when something is stale.
+                // Bake the registered tags to code (accessors + Register). Manual + on-build only (never auto —
+                // would thrash recompiles). Emphasised when stale.
                 var prev = GUI.backgroundColor;
-                if (_staleCount > 0) GUI.backgroundColor = new Color(0.95f, 0.7f, 0.2f);
+                if (_stale) GUI.backgroundColor = new Color(0.95f, 0.7f, 0.2f);
                 if (GUILayout.Button("Generate Code", EditorStyles.toolbarButton, GUILayout.Width(100)))
                 {
                     GameplayTagsCodeGenerator.GenerateAll();
@@ -176,80 +198,15 @@ namespace Heathen.GameplayTags.Editor
             }
         }
 
-        // ── Sources section ──────────────────────────────────────────────────
+        // ── Add row ──────────────────────────────────────────────────────────
 
-        private void DrawSourcesSection()
+        private void DrawAddRow()
         {
-            using (new EditorGUILayout.HorizontalScope(EditorStyles.toolbar, GUILayout.ExpandWidth(true)))
-                EditorGUILayout.LabelField("Tag Sources", EditorStyles.whiteLabel, GUILayout.ExpandWidth(true));
-
-            EnsureData();
-
-            _srcScroll = EditorGUILayout.BeginScrollView(_srcScroll, GUILayout.MaxHeight(120));
-            foreach (var src in _sourcesCache)
-                DrawSourceRow(src);
-            EditorGUILayout.EndScrollView();
-        }
-
-        private void DrawSourceRow(SourceEntry src)
-        {
-            bool isActive = _activeSourcePath == src.Path;
-
-            using (new EditorGUILayout.HorizontalScope(EditorStyles.toolbar, GUILayout.ExpandWidth(true)))
-            {
-                var prev = GUI.contentColor;
-                GUI.contentColor = isActive ? GreenTick : new Color(1, 1, 1, 0);
-                EditorGUILayout.LabelField("✓", GUILayout.Width(16));
-                GUI.contentColor = prev;
-
-                bool nowActive = GUILayout.Toggle(isActive,
-                    $"{src.DisplayName}  ({src.TagCount} tags)",
-                    EditorStyles.toolbarButton, GUILayout.ExpandWidth(true));
-                if (nowActive != isActive)
-                    _activeSourcePath = nowActive ? src.Path : null;
-
-                bool nowReg = GUILayout.Toggle(src.Registered, "Registered",
-                    EditorStyles.toolbarButton, GUILayout.Width(80));
-                if (nowReg != src.Registered)
-                    SetSourceRegistered(src.Path, nowReg);
-            }
-        }
-
-        // ── Tag section ──────────────────────────────────────────────────────
-
-        private void DrawTagSection()
-        {
-            using (new EditorGUILayout.HorizontalScope(EditorStyles.toolbar, GUILayout.ExpandWidth(true)))
-                EditorGUILayout.LabelField("Tags", EditorStyles.whiteLabel, GUILayout.ExpandWidth(true));
-
-            using (new EditorGUILayout.HorizontalScope())
-            {
-                var newFilter = EditorGUILayout.TextField(_filter, EditorStyles.toolbarSearchField);
-                if (newFilter != _filter)
-                {
-                    _filter    = newFilter;
-                    _treeCache = null;
-                }
-            }
-
-            DrawNewTagRow();
-
-            _tagScroll = EditorGUILayout.BeginScrollView(_tagScroll);
-            DrawTagTree();
-            EditorGUILayout.EndScrollView();
-        }
-
-        private void DrawNewTagRow()
-        {
-            if (string.IsNullOrEmpty(_activeSourcePath))
-            {
-                EditorGUILayout.HelpBox("Select a source above to add new tags to it.", MessageType.None);
-                return;
-            }
-
             using (new EditorGUILayout.HorizontalScope())
             {
                 _newTag = EditorGUILayout.TextField(_newTag, GUILayout.ExpandWidth(true));
+                _newTagRegistered = GUILayout.Toggle(_newTagRegistered, "Registered",
+                    EditorStyles.miniButton, GUILayout.Width(80));
                 EditorGUI.BeginDisabledGroup(string.IsNullOrWhiteSpace(_newTag));
                 if (GUILayout.Button("Add Tag", EditorStyles.miniButton, GUILayout.Width(60)))
                     CommitNewTag();
@@ -257,11 +214,22 @@ namespace Heathen.GameplayTags.Editor
             }
         }
 
+        private void DrawFilter()
+        {
+            var newFilter = EditorGUILayout.TextField(_filter, EditorStyles.toolbarSearchField);
+            if (newFilter != _filter)
+            {
+                _filter    = newFilter;
+                _treeCache = null;
+            }
+        }
+
         // ── Tree ─────────────────────────────────────────────────────────────
 
         private List<TagEntry> BuildTree()
         {
-            var explicitTags = _allTagsCache ?? new HashSet<string>();
+            var explicitTags = new HashSet<string>(_registered);
+            explicitTags.UnionWith(_unregistered);
 
             var all = new HashSet<string>(explicitTags);
             foreach (var tag in explicitTags)
@@ -271,7 +239,7 @@ namespace Heathen.GameplayTags.Editor
                     all.Add(string.Join(".", parts.Take(i)));
             }
 
-            var sorted = all.OrderBy(p => p).ToList();
+            var sorted = all.OrderBy(p => p, StringComparer.Ordinal).ToList();
             var result = new List<TagEntry>();
 
             foreach (var path in sorted)
@@ -289,6 +257,7 @@ namespace Heathen.GameplayTags.Editor
                     Segment     = dotIdx < 0 ? path : path.Substring(dotIdx + 1),
                     Depth       = path.Count(c => c == '.'),
                     IsVirtual   = !explicitTags.Contains(path),
+                    Registered  = _registered.Contains(path),
                     HasChildren = sorted.Any(p => p.StartsWith(path + ".")),
                 });
             }
@@ -303,16 +272,13 @@ namespace Heathen.GameplayTags.Editor
             {
                 EditorGUILayout.HelpBox(
                     string.IsNullOrEmpty(_filter)
-                        ? "No tags found. Select a source and add tags above."
+                        ? "No project tags yet. Add one above. (Tool tags — Ogham stories, HATE worlds — are owned by their tools and not shown here.)"
                         : "No tags match the filter.",
                     MessageType.None);
                 return;
             }
 
-            // Rebuild collapsed set from persistent state every frame (foldout fix).
-            var collapsed = new HashSet<string>(
-                _expanded.Where(kv => !kv.Value).Select(kv => kv.Key));
-
+            var collapsed = new HashSet<string>(_expanded.Where(kv => !kv.Value).Select(kv => kv.Key));
             foreach (var entry in tree)
             {
                 if (collapsed.Any(c => entry.FullPath.StartsWith(c + "."))) continue;
@@ -324,10 +290,9 @@ namespace Heathen.GameplayTags.Editor
         {
             const float indent = 14f;
             const float foldW  = 16f;
+            const float regW   = 84f;
 
-            var rowRect = GUILayoutUtility.GetRect(0, EditorGUIUtility.singleLineHeight + 2,
-                GUILayout.ExpandWidth(true));
-
+            var rowRect = GUILayoutUtility.GetRect(0, EditorGUIUtility.singleLineHeight + 2, GUILayout.ExpandWidth(true));
             float x      = rowRect.x + entry.Depth * indent;
             float y      = rowRect.y + 1;
             float h      = EditorGUIUtility.singleLineHeight;
@@ -337,24 +302,25 @@ namespace Heathen.GameplayTags.Editor
             {
                 bool isExpanded  = _expanded.GetValueOrDefault(entry.FullPath, true);
                 bool nowExpanded = EditorGUI.Foldout(new Rect(x, y, foldW, h), isExpanded, GUIContent.none);
-                if (nowExpanded != isExpanded)
-                {
-                    _expanded[entry.FullPath] = nowExpanded;
-                    Repaint();
-                }
-                x += foldW; availW -= foldW;
+                if (nowExpanded != isExpanded) { _expanded[entry.FullPath] = nowExpanded; Repaint(); }
             }
-            else
+            x += foldW; availW -= foldW;
+
+            // Per-explicit-tag "Registered" toggle (moves the tag between groups). Virtual parents have none.
+            if (!entry.IsVirtual)
             {
-                x += foldW; availW -= foldW;
+                var toggleRect = new Rect(rowRect.xMax - regW, y, regW, h);
+                bool nowReg = GUI.Toggle(toggleRect, entry.Registered, "Registered", EditorStyles.miniButton);
+                if (nowReg != entry.Registered) SetRegistered(entry.FullPath, nowReg);
+                availW -= regW + 4;
             }
 
-            EditorGUI.LabelField(new Rect(x, y, availW, h), entry.Segment,
-                entry.IsVirtual ? VirtualStyle : EditorStyles.label);
+            var labelRect = new Rect(x, y, Mathf.Max(0, availW), h);
+            EditorGUI.LabelField(labelRect, entry.Segment, entry.IsVirtual ? VirtualStyle : EditorStyles.label);
 
             if (!entry.IsVirtual &&
                 Event.current.type == EventType.MouseDown &&
-                new Rect(x, y, availW, h).Contains(Event.current.mousePosition))
+                labelRect.Contains(Event.current.mousePosition))
             {
                 Event.current.Use();
                 var capturedPath = entry.FullPath;
@@ -363,6 +329,46 @@ namespace Heathen.GameplayTags.Editor
                     newPath => { if (newPath != capturedPath) CommitRename(capturedPath, newPath); },
                     () => DeleteTag(capturedPath));
             }
+        }
+
+        // ── Contributed tags (read-only provenance) ──────────────────────────
+
+        private void DrawContributedSources()
+        {
+            EnsureData();
+            if ((_contributed == null || _contributed.Count == 0) && (_unattributed == null || _unattributed.Count == 0))
+                return;
+
+            EditorGUILayout.Space(8);
+            using (new EditorGUILayout.HorizontalScope(EditorStyles.toolbar, GUILayout.ExpandWidth(true)))
+                EditorGUILayout.LabelField("Tags From Other Sources (read-only)", EditorStyles.whiteLabel,
+                    GUILayout.ExpandWidth(true));
+
+            foreach (var (name, tags, registered) in _contributed)
+                DrawSourceGroup(name, tags, registered);
+
+            if (_unattributed != null && _unattributed.Count > 0)
+                DrawSourceGroup("Other (unattributed)", _unattributed, true);
+        }
+
+        private void DrawSourceGroup(string name, List<string> tags, bool registered)
+        {
+            var shown = string.IsNullOrEmpty(_filter)
+                ? tags
+                : tags.Where(t => t.Contains(_filter, StringComparison.OrdinalIgnoreCase)).ToList();
+            if (shown.Count == 0) return;
+
+            string key    = "src:" + name;
+            bool   exp    = _expanded.GetValueOrDefault(key, true);
+            string header = $"{name}  ({shown.Count})" + (registered ? "" : "  — draft");
+            bool   now    = EditorGUILayout.Foldout(exp, header, true);
+            if (now != exp) { _expanded[key] = now; Repaint(); }
+            if (!now) return;
+
+            EditorGUI.indentLevel++;
+            foreach (var t in shown)
+                EditorGUILayout.LabelField(t, registered ? EditorStyles.label : VirtualStyle);
+            EditorGUI.indentLevel--;
         }
 
         // ── Mutations ────────────────────────────────────────────────────────
@@ -378,116 +384,64 @@ namespace Heathen.GameplayTags.Editor
                 return;
             }
 
-            var (tags, registered) = ReadGpTagsSource(_activeSourcePath);
-            if (!tags.Contains(trimmed))
+            EnsureData();
+            if (!_registered.Contains(trimmed) && !_unregistered.Contains(trimmed))
             {
-                tags.Add(trimmed);
-                WriteGpTagsFile(_activeSourcePath, tags, registered);
+                (_newTagRegistered ? _settings.RegisteredTags : _settings.UnregisteredTags).Add(trimmed);
+                Commit();
             }
 
             _newTag = "";
             GUI.FocusControl(null);
-            InvalidateAll();
+        }
+
+        private void SetRegistered(string tag, bool registered)
+        {
+            EnsureData();
+            var from = registered ? _settings.UnregisteredTags : _settings.RegisteredTags;
+            var to   = registered ? _settings.RegisteredTags   : _settings.UnregisteredTags;
+            if (from.Remove(tag) && !to.Contains(tag)) to.Add(tag);
+            Commit();
         }
 
         private void CommitRename(string oldFullPath, string newFullPath)
         {
             newFullPath = newFullPath.Trim();
             if (string.IsNullOrEmpty(newFullPath) || newFullPath == oldFullPath) return;
-
             if (!GameplayTagRegistry.ValidateTag(newFullPath))
             {
-                EditorUtility.DisplayDialog("Invalid Name",
-                    $"'{newFullPath}' is not a valid tag path.", "OK");
+                EditorUtility.DisplayDialog("Invalid Name", $"'{newFullPath}' is not a valid tag path.", "OK");
                 return;
             }
 
             EnsureData();
-            foreach (var src in _sourcesCache)
-                RenameInGpTagsFile(src.Path, oldFullPath, newFullPath);
-
-            GameplayTagsDataEditor.ForceRefresh();
-            InvalidateAll();
+            RenameInList(_settings.RegisteredTags,   oldFullPath, newFullPath);
+            RenameInList(_settings.UnregisteredTags, oldFullPath, newFullPath);
+            Commit();
         }
 
         private void DeleteTag(string fullPath)
         {
             EnsureData();
-            foreach (var src in _sourcesCache)
-            {
-                var (tags, registered) = ReadGpTagsSource(src.Path);
-                int before = tags.Count;
-                tags.RemoveAll(t => t == fullPath || t.StartsWith(fullPath + "."));
-                if (tags.Count != before)
-                    WriteGpTagsFile(src.Path, tags, registered);
-            }
-
-            GameplayTagsDataEditor.ForceRefresh();
-            InvalidateAll();
+            _settings.RegisteredTags.RemoveAll(t => t == fullPath || t.StartsWith(fullPath + "."));
+            _settings.UnregisteredTags.RemoveAll(t => t == fullPath || t.StartsWith(fullPath + "."));
+            Commit();
         }
 
-        private void SetSourceRegistered(string path, bool registered)
+        private static void RenameInList(List<string> tags, string oldFullPath, string newFullPath)
         {
-            var (tags, _) = ReadGpTagsSource(path);
-            WriteGpTagsFile(path, tags, registered);
-            InvalidateAll();
-        }
-
-        // ── .gptags file I/O ─────────────────────────────────────────────────
-
-        private static (List<string> tags, bool registered) ReadGpTagsSource(string assetPath)
-        {
-            try
-            {
-                var root       = JObject.Parse(File.ReadAllText(assetPath));
-                var tags       = root["tags"]?.ToObject<List<string>>() ?? new List<string>();
-                var registered = root["registered"]?.Value<bool>() ?? false;
-                return (tags, registered);
-            }
-            catch { return (new List<string>(), false); }
-        }
-
-        private static void WriteGpTagsFile(string assetPath, List<string> tags, bool registered)
-        {
-            var root = new JObject
-            {
-                ["registered"] = registered,
-                ["tags"]       = JArray.FromObject(tags)
-            };
-            File.WriteAllText(assetPath, root.ToString(Newtonsoft.Json.Formatting.Indented));
-            AssetDatabase.ImportAsset(assetPath, ImportAssetOptions.ForceUpdate);
-        }
-
-        private static void RenameInGpTagsFile(string assetPath, string oldFullPath, string newFullPath)
-        {
-            var (tags, registered) = ReadGpTagsSource(assetPath);
-            bool changed = false;
             for (int i = 0; i < tags.Count; i++)
             {
-                if (tags[i] == oldFullPath)
-                { tags[i] = newFullPath; changed = true; }
-                else if (tags[i].StartsWith(oldFullPath + "."))
-                { tags[i] = newFullPath + tags[i].Substring(oldFullPath.Length); changed = true; }
+                if (tags[i] == oldFullPath) tags[i] = newFullPath;
+                else if (tags[i].StartsWith(oldFullPath + ".")) tags[i] = newFullPath + tags[i].Substring(oldFullPath.Length);
             }
-            if (changed) WriteGpTagsFile(assetPath, tags, registered);
         }
 
-        // ── Create new .gptags file ──────────────────────────────────────────
-
-        private void CreateGpTagsFile()
+        // Persist + re-register so the live registry, validation and pickers reflect the edit immediately.
+        private void Commit()
         {
-            var path = EditorUtility.SaveFilePanelInProject(
-                "New Tag Source", "TagSource", "gptags", "Choose save location");
-            if (string.IsNullOrEmpty(path)) return;
-
-            var root = new JObject
-            {
-                ["registered"] = true,
-                ["tags"]       = new JArray()
-            };
-            File.WriteAllText(path, root.ToString(Newtonsoft.Json.Formatting.Indented));
-            AssetDatabase.ImportAsset(path);
-            _activeSourcePath = path;
+            _settings.Save();
+            GameplayTagsEditorRegistrar.Refresh();
             InvalidateAll();
         }
     }

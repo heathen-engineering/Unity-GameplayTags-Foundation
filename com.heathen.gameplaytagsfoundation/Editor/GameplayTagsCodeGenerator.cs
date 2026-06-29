@@ -7,82 +7,82 @@ using UnityEngine;
 namespace Heathen.GameplayTags.Editor
 {
     /// <summary>
-    /// Generates baked C# from a <c>.gptags</c> source (GameplayTags-CodeGen-Spec, S2): a flat accessor
-    /// class of <see cref="GameplayTag"/> constants (purpose 2 — autocomplete, no fat-fingering) plus a
-    /// baked <c>Register()</c> that hands the registry literal Id/ParentId/Name (purpose 1 — instant load,
-    /// no parse/hash/SO). Ids are baked from <see cref="GameplayTagRegistry.Hash"/> at generation time.
+    /// Bakes the project's standalone tag vocabulary (the <see cref="GameplayTagSettings.RegisteredTags"/> in
+    /// <c>ProjectSettings</c>) into a single C# file (GameplayTags-CodeGen-Spec, S2): a flat accessor class of
+    /// <see cref="GameplayTag"/> constants (purpose 2 — autocomplete, no fat-fingering) plus a baked
+    /// <c>Register()</c> that hands the registry literal Id/ParentId/Name (purpose 1 — instant load, no
+    /// parse/hash/SO). Ids are baked from <see cref="GameplayTagRegistry.Hash"/> at generation time.
     ///
-    /// The string-producing core (<see cref="SanitizeMember"/>, <see cref="GenerateSource"/>) is pure and
-    /// unit-tested; <see cref="Generate"/>/<see cref="GenerateAll"/> are the editor I/O wrappers. The
-    /// Generate button + build hook + staleness indicator are S3.
+    /// <para>Tool-owned tags are NOT generated here — each tool (Ogham, HATE, …) bakes its own tags through its
+    /// own generator. This handles only the project-level tags a developer authors directly.</para>
+    ///
+    /// The string-producing core (<see cref="SanitizeMember"/>, <see cref="GenerateSource"/>,
+    /// <see cref="ContentHash"/>) is pure and unit-tested; <see cref="Generate"/> is the editor I/O wrapper,
+    /// driven on demand (menu / Project Settings button) and by the framework build hook via
+    /// <c>GameplayTagsSettingsGenerator</c>.
     /// </summary>
     public static class GameplayTagsCodeGenerator
     {
         public const string GeneratedNamespace = "Heathen.GameplayTags.Generated";
-        public const string GeneratedFolder    = "Generated";
+
+        /// <summary>The generated accessor + registration class name for the project's standalone tags.</summary>
+        public const string ClassName = "ProjectGameplayTags";
+
+        /// <summary>
+        /// Project-relative path of the single generated file. It sits under <c>Assets</c> so it compiles into
+        /// the player (Assembly-CSharp), where its <c>[RuntimeInitializeOnLoadMethod] Register()</c> registers
+        /// the baked tag hierarchy at startup.
+        /// </summary>
+        public const string GeneratedPath = "Assets/Generated/GameplayTags/" + ClassName + ".g.cs";
+
+        private const string HashMarker = "// gptags-hash:0x";
 
         [MenuItem("Tools/Heathen/GameplayTags/Generate Tag Code")]
         public static void GenerateAll()
         {
-            string[] files = Directory.GetFiles(Application.dataPath, "*.gptags", SearchOption.AllDirectories);
-            int generated = 0;
-            foreach (var full in files)
-            {
-                // Convert absolute path → project-relative "Assets/…".
-                string assetPath = "Assets" + full.Substring(Application.dataPath.Length).Replace('\\', '/');
-                if (Generate(assetPath)) generated++;
-            }
+            Generate();
             AssetDatabase.Refresh();
-            Debug.Log($"[GameplayTags] Generated tag code for {generated} of {files.Length} .gptags file(s).");
+            Debug.Log("[GameplayTags] Generated project tag code.");
         }
 
-        /// <summary>Generate the <c>.g.cs</c> for one <c>.gptags</c>. Returns true if it emitted code
-        /// (false when the source isn't <c>registered</c> or has no tags).</summary>
-        public static bool Generate(string gptagsAssetPath)
+        /// <summary>
+        /// Bakes the project's registered tags to <see cref="GeneratedPath"/>. When there are no registered
+        /// project tags, removes the generated file instead of emitting an empty one.
+        /// </summary>
+        public static void Generate()
         {
-            string full = Path.GetFullPath(gptagsAssetPath);
-            string json = File.ReadAllText(full);
-            GameplayTagsCompiler.ParseSource(json, out bool registered, out string[] tags);
-            if (!registered || tags.Length == 0)
-                return false;
+            var entries = LoadEntries();
+            string full = Path.GetFullPath(GeneratedPath);
 
-            var entries = GameplayTagsCompiler.BuildEntries(tags);
-            string className = SanitizeMember(Path.GetFileNameWithoutExtension(gptagsAssetPath));
-            string source = GenerateSource(className, GeneratedNamespace, entries);
-
-            string outPath = GeneratedPathFor(gptagsAssetPath);
-            Directory.CreateDirectory(Path.GetDirectoryName(outPath));
-            File.WriteAllText(outPath, source);
-            return true;
-        }
-
-        /// <summary>The absolute path of the <c>.g.cs</c> a given <c>.gptags</c> generates.</summary>
-        public static string GeneratedPathFor(string gptagsAssetPath)
-        {
-            string full = Path.GetFullPath(gptagsAssetPath);
-            string className = SanitizeMember(Path.GetFileNameWithoutExtension(gptagsAssetPath));
-            string dir = Path.Combine(Path.GetDirectoryName(full) ?? ".", GeneratedFolder);
-            return Path.Combine(dir, className + ".g.cs");
-        }
-
-        /// <summary>True if a registered <c>.gptags</c> has no generated file, or one whose embedded content
-        /// hash differs from the current source — i.e. the generated code is behind the JSON. Unregistered /
-        /// empty sources are never "stale" (they generate nothing).</summary>
-        public static bool IsStale(string gptagsAssetPath)
-        {
-            string json;
-            try { json = File.ReadAllText(Path.GetFullPath(gptagsAssetPath)); }
-            catch { return false; }
-            GameplayTagsCompiler.ParseSource(json, out bool registered, out string[] tags);
-            if (!registered || tags.Length == 0) return false;
-
-            ulong want = ContentHash(GameplayTagsCompiler.BuildEntries(tags));
-            string outPath = GeneratedPathFor(gptagsAssetPath);
-            if (!File.Exists(outPath)) return true;
-
-            foreach (var line in File.ReadLines(outPath))
+            if (entries.Length == 0)
             {
-                int idx = line.IndexOf(HashMarker, System.StringComparison.Ordinal);
+                DeleteIfExists(full);
+                DeleteIfExists(full + ".meta");
+                return;
+            }
+
+            string source = GenerateSource(ClassName, GeneratedNamespace, entries);
+            Directory.CreateDirectory(Path.GetDirectoryName(full));
+            File.WriteAllText(full, source);
+        }
+
+        /// <summary>
+        /// True when the generated file is behind the project's registered tags: missing while tags exist, an
+        /// embedded hash that differs from the current set, or present while there are no tags (needs removal).
+        /// </summary>
+        public static bool IsStale()
+        {
+            var entries = LoadEntries();
+            string full  = Path.GetFullPath(GeneratedPath);
+            bool exists  = File.Exists(full);
+
+            if (entries.Length == 0) return exists;     // a stale leftover that should be deleted
+            if (!exists)             return true;
+
+            ulong want = ContentHash(entries);
+            foreach (var line in File.ReadLines(full))
+            {
+                int idx = line.IndexOf(HashMarker, StringComparison.Ordinal);
                 if (idx < 0) continue;
                 string hex = line.Substring(idx + HashMarker.Length).Trim();
                 return !(ulong.TryParse(hex, System.Globalization.NumberStyles.HexNumber,
@@ -91,16 +91,17 @@ namespace Heathen.GameplayTags.Editor
             return true; // no marker → regenerate
         }
 
-        /// <summary>How many registered <c>.gptags</c> in the project have out-of-date generated code.</summary>
-        public static int CountStaleRegistered()
+        // Build the baked entries from the ProjectSettings registered tags (parents auto-included).
+        private static CompiledTagEntry[] LoadEntries()
         {
-            int n = 0;
-            foreach (var full in Directory.GetFiles(Application.dataPath, "*.gptags", SearchOption.AllDirectories))
-            {
-                string assetPath = "Assets" + full.Substring(Application.dataPath.Length).Replace('\\', '/');
-                if (IsStale(assetPath)) n++;
-            }
-            return n;
+            var settings = GameplayTagSettings.GetOrCreate();
+            var tags = settings.RegisteredTags?.ToArray() ?? Array.Empty<string>();
+            return GameplayTagsCompiler.BuildEntries(tags);
+        }
+
+        private static void DeleteIfExists(string path)
+        {
+            if (File.Exists(path)) File.Delete(path);
         }
 
         /// <summary>Deterministic hash over the baked entries (Id/ParentId/Name) — embedded in the generated
@@ -113,8 +114,6 @@ namespace Heathen.GameplayTags.Editor
             return GameplayTagRegistry.Hash(sb.ToString());
         }
 
-        private const string HashMarker = "// gptags-hash:0x";
-
         /// <summary>
         /// The pure code emitter (no I/O). Produces the accessor class + baked <c>Register()</c> text for a
         /// set of baked entries. Deterministic given the same entries (they arrive parent-before-child).
@@ -123,8 +122,8 @@ namespace Heathen.GameplayTags.Editor
         {
             var sb = new StringBuilder();
             sb.AppendLine("// <auto-generated>");
-            sb.AppendLine("//   Generated from a .gptags source by GameplayTagsCodeGenerator. DO NOT EDIT.");
-            sb.AppendLine("//   Edit the .gptags file and re-run Tools ▸ Heathen ▸ GameplayTags ▸ Generate Tag Code.");
+            sb.AppendLine("//   Generated from the project's Gameplay Tag settings by GameplayTagsCodeGenerator. DO NOT EDIT.");
+            sb.AppendLine("//   Edit the tags in Project Settings ▸ Gameplay Tags, then re-run Tools ▸ Heathen ▸ GameplayTags ▸ Generate Tag Code.");
             sb.AppendLine("// </auto-generated>");
             sb.AppendLine($"{HashMarker}{ContentHash(entries):X16}  // staleness marker — do not edit");
             sb.AppendLine("using Heathen.GameplayTags;");
@@ -149,7 +148,7 @@ namespace Heathen.GameplayTags.Editor
                 sb.AppendLine($"{ind}        new CompiledTagEntry {{ Id = 0x{e.Id:X16}UL, ParentId = 0x{e.ParentId:X16}UL, Name = \"{e.Name}\" }},");
             sb.AppendLine($"{ind}    }};");
             sb.AppendLine();
-            sb.AppendLine($"{ind}    /// <summary>Registers this set's tags (baked literals) into the GameplayTagRegistry.</summary>");
+            sb.AppendLine($"{ind}    /// <summary>Registers the project's tags (baked literals) into the GameplayTagRegistry.</summary>");
             sb.AppendLine($"{ind}    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]");
             sb.AppendLine($"{ind}    public static void Register() => GameplayTagRegistry.RegisterBaked(_baked);");
 

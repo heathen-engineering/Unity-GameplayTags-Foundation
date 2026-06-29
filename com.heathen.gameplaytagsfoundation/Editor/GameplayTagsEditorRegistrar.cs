@@ -1,39 +1,31 @@
-using System.IO;
+using System;
 using UnityEditor;
 
 namespace Heathen.GameplayTags.Editor
 {
     /// <summary>
-    /// Populates the live <see cref="GameplayTagRegistry"/> in the EDITOR by reading the <c>.gptags</c> JSON
-    /// sources directly (no ScriptableObject). Runs on every domain reload so the tag picker / settings /
-    /// validation reflect the current sources, and is re-run by the importer when a <c>.gptags</c> changes.
+    /// Registers the project's standalone tags (the <see cref="GameplayTagSettings.RegisteredTags"/> in
+    /// <c>ProjectSettings</c>) into the live <see cref="GameplayTagRegistry"/> in the EDITOR, so the tag picker,
+    /// settings panel, and validation reflect them. Runs on every domain reload and is re-run when the settings
+    /// change. Tool-owned tags are registered by each tool's own editor path (e.g. Ogham's tag registrar); this
+    /// covers only the project-level vocabulary.
     ///
-    /// At runtime (play / builds) registration is instead the generated <c>Register()</c>
-    /// (<c>[RuntimeInitializeOnLoadMethod]</c>, baked literals) — see GameplayTags-CodeGen-Spec. This editor
-    /// path is the live-authoring half of the same contract: JSON drives the editor, baked code drives the game.
+    /// <para>At runtime the same tags arrive via the generated <c>Register()</c>
+    /// (<c>[RuntimeInitializeOnLoadMethod]</c>, baked literals) — see GameplayTags-CodeGen-Spec. The
+    /// <c>.gptags</c> format is no longer an editor source; it remains only as a runtime mod / UGC source.</para>
     /// </summary>
     [InitializeOnLoad]
     public static class GameplayTagsEditorRegistrar
     {
         static GameplayTagsEditorRegistrar() => EditorApplication.delayCall += Refresh;
 
-        /// <summary>Re-read every <c>.gptags</c> source and register its tags into the live registry.</summary>
+        /// <summary>Re-read the project tag settings and register their hierarchy-aware tags into the live registry.</summary>
         public static void Refresh()
         {
-            foreach (var path in GameplayTagsSources.FindAll())
-            {
-                try
-                {
-                    var json = File.ReadAllText(Path.GetFullPath(path));
-                    GameplayTagsCompiler.ParseSource(json, out bool registered, out string[] tags);
-                    if (registered && tags.Length > 0)
-                        GameplayTagRegistry.RegisterBaked(GameplayTagsCompiler.BuildEntries(tags));
-                }
-                catch
-                {
-                    // A malformed .gptags is surfaced by the importer's LogImportError; skip it here.
-                }
-            }
+            var settings = GameplayTagSettings.Reload();
+            var tags     = settings.RegisteredTags?.ToArray() ?? Array.Empty<string>();
+            if (tags.Length == 0) return;
+            GameplayTagRegistry.RegisterBaked(GameplayTagsCompiler.BuildEntries(tags));
         }
     }
 }
