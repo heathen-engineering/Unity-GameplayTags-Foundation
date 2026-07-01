@@ -66,6 +66,9 @@ namespace Heathen.GameplayTags.Editor
             File.WriteAllText(full, source);
         }
 
+        /// <summary>True when a generated tags file already exists in the project.</summary>
+        public static bool ScriptExists() => File.Exists(Path.GetFullPath(GeneratedPath));
+
         /// <summary>
         /// True when the generated file is behind the project's registered tags: missing while tags exist, an
         /// embedded hash that differs from the current set, or present while there are no tags (needs removal).

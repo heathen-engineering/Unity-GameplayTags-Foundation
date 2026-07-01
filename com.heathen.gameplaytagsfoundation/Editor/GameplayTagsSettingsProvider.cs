@@ -186,15 +186,15 @@ namespace Heathen.GameplayTags.Editor
                     InvalidateAll();
                 }
                 // Bake the registered tags to code (accessors + Register). Manual + on-build only (never auto —
-                // would thrash recompiles). Emphasised when stale.
-                var prev = GUI.backgroundColor;
-                if (_stale) GUI.backgroundColor = new Color(0.95f, 0.7f, 0.2f);
-                if (GUILayout.Button("Generate Code", EditorStyles.toolbarButton, GUILayout.Width(100)))
+                // would thrash recompiles). Shared Heathen Build/status button.
+                var status = !GameplayTagsCodeGenerator.ScriptExists() ? HeathenEditorStyles.BuildStatus.NotBuilt
+                           : _stale ? HeathenEditorStyles.BuildStatus.Dirty
+                           : HeathenEditorStyles.BuildStatus.UpToDate;
+                if (HeathenEditorStyles.BuildStatusButton(status))
                 {
                     GameplayTagsCodeGenerator.GenerateAll();
                     InvalidateAll();
                 }
-                GUI.backgroundColor = prev;
             }
         }
 
