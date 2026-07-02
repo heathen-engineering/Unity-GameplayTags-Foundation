@@ -12,9 +12,12 @@ namespace Heathen.GameplayTags.Editor
     /// play-mode guard / Scene-view overlay). Reuses the registered "Gameplay Tags" generator so it always agrees
     /// with the shared build pipeline.
     /// </summary>
-    public sealed class GameplayTagsSubsystemHealth : ISubsystemHealth
+    public sealed class GameplayTagsSubsystemHealth : ISubsystemHealth, ISubsystemSettingsPage, ISubsystemDocumentation
     {
         public Type SubsystemType => typeof(GameplayTagsSubsystem);
+
+        public void Open() => SettingsService.OpenProjectSettings("Project/Subsystems/Gameplay Tags");
+        public string DocumentationUrl => "https://heathen.group/kb/gameplaytags-welcome/";
 
         public IEnumerable<SubsystemIssue> GetIssues()
         {
