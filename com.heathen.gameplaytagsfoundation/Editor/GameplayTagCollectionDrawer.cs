@@ -60,7 +60,7 @@ namespace Heathen.GameplayTags.Editor
             var    name     = GameplayTagRegistry.GetName(id) ?? (id == 0 ? "(none)" : $"[Unknown:{id:X8}]");
             bool   isBroken = id != 0 && GameplayTagRegistry.GetName(id) == null;
             var    style    = isBroken
-                ? new GUIStyle(EditorStyles.popup) { normal = { textColor = Color.yellow } }
+                ? new GUIStyle(EditorStyles.popup) { normal = new GUIStyleState { textColor = Color.yellow } }
                 : EditorStyles.popup;
 
             if (GUI.Button(rect, name, style))

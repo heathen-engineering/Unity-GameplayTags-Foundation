@@ -122,7 +122,7 @@ namespace Heathen.GameplayTags.Editor
         private static GUIStyle VirtualStyle => s_virtualStyle ??= new GUIStyle(EditorStyles.label)
         {
             fontStyle = FontStyle.Italic,
-            normal = { textColor = new Color(0.5f, 0.5f, 0.5f) }
+            normal = new GUIStyleState { textColor = new Color(0.5f, 0.5f, 0.5f) }
         };
 
         // ── SettingsProvider plumbing ─────────────────────────────────────────
@@ -175,7 +175,7 @@ namespace Heathen.GameplayTags.Editor
 
                 if (_stale)
                 {
-                    var warn = new GUIStyle(EditorStyles.miniLabel) { normal = { textColor = new Color(0.95f, 0.7f, 0.2f) } };
+                    var warn = new GUIStyle(EditorStyles.miniLabel) { normal = new GUIStyleState { textColor = new Color(0.95f, 0.7f, 0.2f) } };
                     EditorGUILayout.LabelField("⚠ tag code needs regenerating", warn, GUILayout.Width(190));
                 }
 
