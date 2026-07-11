@@ -1,11 +1,7 @@
 {
-    "name": "Heathen.GameplayTags.Editor",
-    "rootNamespace": "",
-    "references": [
-        "Heathen.GameplayTags",
-        "Heathen.GameFramework",
-        "Heathen.GameFramework.Editor"
-    ],
+    "name": "Heathen.GameplayTags.Editor.Bootstrap",
+    "rootNamespace": "Heathen.GameplayTags.Editor",
+    "references": [],
     "includePlatforms": [
         "Editor"
     ],
@@ -14,9 +10,7 @@
     "overrideReferences": false,
     "precompiledReferences": [],
     "autoReferenced": true,
-    "defineConstraints": [
-        "HEATHEN_GAMEFRAMEWORK"
-    ],
+    "defineConstraints": [],
     "versionDefines": [
         {
             "name": "com.heathen.gameframework",
