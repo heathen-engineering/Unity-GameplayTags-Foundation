@@ -2,7 +2,7 @@
 
 ![License](https://img.shields.io/badge/License-Apache_2.0-blue?style=flat-square)
 ![Maintained](https://img.shields.io/badge/Maintained%3F-yes-green?style=flat-square)
-![Unity](https://img.shields.io/badge/Unity-6%20%2B-black?style=flat-square&logo=unity&logoColor=white)
+![Unity](https://img.shields.io/badge/Unity-6%20%2B-%23313131?style=flat-square&logo=unity&logoColor=white)
 
 A lightweight, hierarchy-aware tag system for Unity. Tags are dot-separated names stored as hashed `ulong` values — zero runtime string cost after registration, Burst-safe snapshot APIs included.
 
